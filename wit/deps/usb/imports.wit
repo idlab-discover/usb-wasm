@@ -1,0 +1,5 @@
+package wadu436:usb@0.0.1;
+
+world imports {
+    import device;    
+}

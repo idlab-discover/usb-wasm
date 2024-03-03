@@ -1,0 +1,5 @@
+package wadu436:usb-bindings; 
+
+world bindings {
+    include wadu436:usb/imports@0.0.1;
+}

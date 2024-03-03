@@ -1,0 +1,93 @@
+package wadu436:usb@0.0.1;
+
+// Open questions/TODOs:
+// TODO: Hotplug support? How to write a decent interface for that? Maybe wait for async primitives in preview 3?
+// TODO: how to handle timeouts? WebUSB doesn't have them either. see https://stackoverflow.com/questions/65424624/does-webusb-support-timeouts and https://github.com/WICG/webusb/issues/25
+// TODO: async support? (probably wait for preview 3)
+// TODO: should transfer functions, ... take a resource to the endpoint/interface/configuration, or a raw u8? See README for more info
+
+interface device {
+    use descriptors.{device-descriptor, configuration-descriptor, interface-descriptor, endpoint-descriptor};
+    use types.{speed, filter, control-setup-type, control-setup-recipient, control-setup};
+
+    
+    // Main resource representing a USB device. Any communication with the device happens through this resource.
+    resource usb-device {
+        // Main entry point for the API.
+        // Returns all the USB devices currently connected to the system (or if access control is implemented by the runtime, only the ones the component has access to)
+        enumerate: static func() -> list<usb-device>;
+
+        // Convenience funtion, equivalent to calling enumerate(), applying the provided filters to the list, and returning the first element
+        request-device: static func(filter: filter) -> option<usb-device>;
+
+        // Returns the device descriptor of the device
+        descriptor: func() -> device-descriptor;
+
+        // Returns the USB Speed of the device (Low, Full, High, ...)
+        speed: func() -> speed;
+
+        // Returns all the configurations the device supports
+        configurations: func() -> list<usb-configuration>;
+        // Returns the currently active configuration
+        active-configuration: func() -> usb-configuration;
+
+        // Opens the device. This is required before any transfers can be made.
+        open: func() -> ();
+        // Returns whether the device is currently open.
+        opened: func() -> bool;
+        // Resets the device.
+        reset: func() -> ();
+        // Closes the device.
+        close: func() -> ();
+
+        // Selects the active configuration. The device must first be opened.
+        select-configuration: func(configuration: borrow<usb-configuration>) -> ();
+
+        // Claims an interface for exclusive use. Also selects the alternate interface, as the usb-interface resource actually represents an alternate interface.
+        claim-interface: func(if: borrow<usb-interface>) -> ();
+        // Releases an interface.
+        release-interface: func(if: borrow<usb-interface>) -> ();
+
+        // Clears a halt on a specific endpoint.
+        clear-halt: func(endpoint: borrow<usb-endpoint>) -> ();
+
+        // Read control data from the device. The endpoint is always EP0.
+        read-control: func(request: control-setup) -> list<u8>;
+        // Write control data to the device. The endpoint is always EP0. The return value is the number of bytes written.
+        write-control: func(request: control-setup, data: list<u8>) -> u64;
+
+        // Read data from an interrupt endpoint. The endpoint must be an interrupt endpoint.
+        read-interrupt: func(endpoint: borrow<usb-endpoint>) -> list<u8>;
+        // Write data to an interrupt endpoint. The endpoint must be an interrupt endpoint. The return value is the number of bytes written.
+        write-interrupt: func(endpoint: borrow<usb-endpoint>, data: list<u8>) -> u64;
+
+        // Read data from a bulk endpoint. The endpoint must be a bulk endpoint.
+        read-bulk: func(endpoint: borrow<usb-endpoint>) -> list<u8>;
+        // Write data to a bulk endpoint. The endpoint must be a bulk endpoint. The return value is the number of bytes written.
+        write-bulk: func(endpoint: borrow<usb-endpoint>, data: list<u8>) -> u64;
+
+        // TODO: support sending/receiving multiple packets at once for isochronous endpoints?
+        // Read data from an isochronous endpoint. The endpoint must be an isochronous endpoint.
+        read-isochronous: func(endpoint: borrow<usb-endpoint>) -> list<u8>;
+        // Write data to an isochronous endpoint. The endpoint must be an isochronous endpoint. The return value is the number of bytes written.
+        write-isochronous: func(endpoint: borrow<usb-endpoint>, data: list<u8>) -> u64;
+    }
+
+    // Represents a USB configuration. A device can have multiple configurations, but only one can be active at a time.
+    resource usb-configuration {
+        descriptor: func() -> configuration-descriptor;
+        interfaces: func() -> list<usb-interface>;
+    }
+
+    // Represents a USB interface.
+    // This resource actually represents an *alternate* interface. An interface can have multiple alternates, but only one can be active at a time.
+    resource usb-interface {
+        descriptor: func() -> interface-descriptor;
+        endpoints: func() -> list<usb-endpoint>;
+    }
+
+    // Represents a USB endpoint.
+    resource usb-endpoint {
+        descriptor: func() -> endpoint-descriptor;
+    }
+}

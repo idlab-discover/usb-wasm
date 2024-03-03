@@ -1,0 +1,42 @@
+[package]
+name = "wasmtime-usb-cli"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { workspace = true }
+color-eyre = "0.6.2"
+serde = { version = "1.0.193", features = ["derive"] }
+ureq = { version = "2.9.1", features = ["json"] }
+usb-wasm = { workspace = true }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+
+[workspace]
+members = [
+    "command-components/control",
+    "command-components/lsusb",
+    "command-components/ping",
+    "command-components/xbox",
+    "usb-wasm",
+    "usb-wasm-bindings",
+]
+
+[workspace.dependencies]
+usb-wasm = { path = "usb-wasm" }
+usb-wasm-bindings = { path = "usb-wasm-bindings" }
+
+anyhow = "1.0.75"
+wasmtime = "18.0.1"
+wasmtime-wasi = "18.0.1"
+
+[profile.release]
+strip = true
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 3

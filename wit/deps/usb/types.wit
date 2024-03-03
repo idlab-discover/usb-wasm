@@ -1,0 +1,67 @@
+package wadu436:usb@0.0.1;
+
+// TODO: Create an error type
+
+interface types {
+    type version = tuple<u8, u8, u8>;
+
+    // Record for passing into the request-device convenience function.
+    record filter {
+        vendor-id: option<u16>,
+        product-id: option<u16>,
+        class-code: option<u8>,
+        subclass-code: option<u8>,
+        protocol-code: option<u8>,
+        serial-number: option<string>,
+    }
+
+    // Endpoint transfer types
+    enum transfer-type {
+        control,
+        isochronous,
+        bulk,
+        interrupt,
+    }
+
+    // Endpoint direction
+    enum direction {
+        out,
+        in,
+    }
+
+    // Device speed
+    enum speed {
+        unknown, // OS doesn't know which speed the device is using
+        low, // 1.5 Mbit/s
+        full, // 12 Mbit/s
+        high, // 480 Mbit/s
+        super, // 5 Gbit/s
+        superplus, // 10 Gbit/s
+    }
+
+    // Setup type for control transfers
+    enum control-setup-type {
+        standard,
+        class,
+        vendor,
+        // reserved?
+    }
+
+    // Recipient for control transfers
+    enum control-setup-recipient {
+        device,
+        if, // interface, but that's a keyword
+        endpoint,
+        // other?
+    }
+
+    // Control setup packet
+    record control-setup {
+        request-type: control-setup-type,
+        request-recipient: control-setup-recipient,
+        request: u8, // bRequest
+        value: u16, // wValue
+        index: u16, // wIndex
+    }
+}
+

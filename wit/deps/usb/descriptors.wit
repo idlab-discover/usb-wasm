@@ -1,0 +1,50 @@
+package wadu436:usb@0.0.1;
+
+interface descriptors {
+    use types.{version, direction, transfer-type};
+
+    // Contains the fields of the device descriptor as defined in the USB 2.0 spec
+    record device-descriptor {
+        product-name: option<string>,
+        manufacturer-name: option<string>,
+        serial-number: option<string>,
+
+        usb-version: version,
+
+        vendor-id: u16,
+        product-id: u16,
+        device-version: version,
+
+        device-class: u8,
+        device-subclass: u8,
+        device-protocol: u8,
+    }
+
+    // Contains the fields of the configuration descriptor
+    record configuration-descriptor {
+        number: u8,
+        description: option<string>,
+        self-powered: bool,
+        remote-wakeup: bool,
+        max-power: u16, // in milliAmps !NOTE: this is not the same as the USB spec, which uses 2mA units
+    }
+
+    // Contains the fields of the interface descriptor
+    record interface-descriptor {
+        interface-number: u8,
+        alternate-setting: u8,
+        interface-class: u8,
+        interface-subclass: u8,
+        interface-protocol: u8,
+        interface-name: option<string>,
+    }
+
+    // Contains the fields of the endpoint descriptor
+    record endpoint-descriptor {
+        endpoint-number: u8, // 0-15, lower 4 bits of the bEndpointAddress field
+        direction: direction, // corresponds to bit 7 of the bEndpointAddress field
+        transfer-type: transfer-type, // corresponds to bits 0-1 of the bmAttributes field
+        max-packet-size: u16,
+        interval: u8, // for interrupt and isochronous endpoints
+    }
+}
