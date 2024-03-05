@@ -50,7 +50,7 @@ interface types {
     // Recipient for control transfers
     enum control-setup-recipient {
         device,
-        if, // interface, but that's a keyword
+        %interface, // interface, but that's a keyword
         endpoint,
         // other?
     }

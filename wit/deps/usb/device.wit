@@ -9,7 +9,6 @@ package wadu436:usb@0.0.1;
 interface device {
     use descriptors.{device-descriptor, configuration-descriptor, interface-descriptor, endpoint-descriptor};
     use types.{speed, filter, control-setup-type, control-setup-recipient, control-setup};
-
     
     // Main resource representing a USB device. Any communication with the device happens through this resource.
     resource usb-device {
@@ -44,9 +43,9 @@ interface device {
         select-configuration: func(configuration: borrow<usb-configuration>) -> ();
 
         // Claims an interface for exclusive use. Also selects the alternate interface, as the usb-interface resource actually represents an alternate interface.
-        claim-interface: func(if: borrow<usb-interface>) -> ();
+        claim-interface: func(%interface: borrow<usb-interface>) -> ();
         // Releases an interface.
-        release-interface: func(if: borrow<usb-interface>) -> ();
+        release-interface: func(%interface: borrow<usb-interface>) -> ();
 
         // Clears a halt on a specific endpoint.
         clear-halt: func(endpoint: borrow<usb-endpoint>) -> ();

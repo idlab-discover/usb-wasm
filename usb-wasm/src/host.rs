@@ -13,7 +13,7 @@ fn host_control_setup_to_rusb(
     };
     let request_recipient = match setup.request_recipient {
         ControlSetupRecipient::Device => rusb::Recipient::Device,
-        ControlSetupRecipient::If => rusb::Recipient::Interface,
+        ControlSetupRecipient::Interface => rusb::Recipient::Interface,
         ControlSetupRecipient::Endpoint => rusb::Recipient::Endpoint,
     };
 
