@@ -22,6 +22,8 @@ use wasmtime_wasi::preview2::WasiView;
 
 mod host;
 
+const TIMEOUT: Duration = Duration::from_secs(1);
+
 pub struct UsbDevice {
     device: rusb::Device<rusb::GlobalContext>,
     handle: Option<rusb::DeviceHandle<GlobalContext>>,
@@ -229,7 +231,7 @@ impl UsbDevice {
         if let Some(handle) = &mut self.handle {
             let mut buffer = vec![0; buffer_size];
             let _bytes_read = handle
-                .read_interrupt(endpoint, &mut buffer, Duration::from_micros(0))
+                .read_interrupt(endpoint, &mut buffer, TIMEOUT)
                 .unwrap();
             buffer.resize(_bytes_read, 0);
             Ok(buffer)
@@ -246,7 +248,7 @@ impl UsbDevice {
     ) -> Result<usize, rusb::Error> {
         if let Some(handle) = &mut self.handle {
             let bytes_written = handle
-                .write_interrupt(endpoint, buffer, Duration::from_micros(0))
+                .write_interrupt(endpoint, buffer, TIMEOUT)
                 .unwrap();
             Ok(bytes_written)
         } else {
@@ -263,7 +265,7 @@ impl UsbDevice {
         if let Some(handle) = &mut self.handle {
             let mut buffer = vec![0; buffer_size];
             let _bytes_read = handle
-                .read_bulk(endpoint, &mut buffer, Duration::from_micros(0))
+                .read_bulk(endpoint, &mut buffer, TIMEOUT)
                 .unwrap();
             buffer.resize(_bytes_read, 0);
             Ok(buffer)
@@ -276,7 +278,7 @@ impl UsbDevice {
     pub fn bulk_transfer_out(&mut self, endpoint: u8, buffer: &[u8]) -> Result<usize, rusb::Error> {
         if let Some(handle) = &mut self.handle {
             let bytes_written = handle
-                .write_bulk(endpoint, buffer, Duration::from_micros(0))
+                .write_bulk(endpoint, buffer, TIMEOUT)
                 .unwrap();
             Ok(bytes_written)
         } else {
@@ -453,7 +455,7 @@ impl UsbDevice {
                 setup.value,
                 setup.index,
                 &mut buffer,
-                Duration::from_micros(0),
+                TIMEOUT,
             )?;
             buffer.truncate(bytes_read);
             Ok(buffer)
@@ -480,7 +482,7 @@ impl UsbDevice {
                 setup.value,
                 setup.index,
                 data,
-                Duration::from_micros(0),
+                TIMEOUT,
             )?;
             Ok(bytes_written as u64)
         } else {
@@ -611,8 +613,6 @@ impl UsbEndpoint {
             }
     }
 }
-
-const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum UsbError {

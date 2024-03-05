@@ -55,8 +55,8 @@ pub fn main() -> anyhow::Result<()> {
         0x01 => {
             println!("Using protocol 0x01 (Bulk)");
             loop {
-                arduino_usb.write_bulk(&endpoint_out, data_raw);
-                println!("Sent {} bytes (bulk): {:?}", data.len(), data);
+                let bytes_written = arduino_usb.write_bulk(&endpoint_out, data_raw);
+                println!("Sent {} bytes (bulk): {:?}", bytes_written, data);
                 let data = arduino_usb.read_bulk(&endpoint_in);
                 let buf_utf8 = String::from_utf8_lossy(&data);
                 println!("Read {} bytes (bulk): {:?}", data.len(), buf_utf8);
@@ -65,8 +65,8 @@ pub fn main() -> anyhow::Result<()> {
         0x02 => {
             println!("Using protocol 0x02 (Interrupt)");
             loop {
-                arduino_usb.write_interrupt(&endpoint_out, data_raw);
-                println!("Sent {} bytes (interrupt): {:?}", data.len(), data);
+                let bytes_written = arduino_usb.write_interrupt(&endpoint_out, data_raw);
+                println!("Sent {} bytes (interrupt): {:?}", bytes_written, data);
                 let data = arduino_usb.read_interrupt(&endpoint_in);
                 let buf_utf8 = String::from_utf8_lossy(&data);
                 println!("Read {} bytes (interrupt): {:?}", data.len(), buf_utf8);
