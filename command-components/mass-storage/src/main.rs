@@ -1,8 +1,7 @@
-use std::{ffi::CStr, rc::Rc};
+use std::rc::Rc;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use thiserror::Error;
 use usb_wasm_bindings::{
     descriptors::TransferType,
     device::{UsbConfiguration, UsbDevice, UsbEndpoint, UsbInterface},
@@ -127,14 +126,23 @@ impl InquiryResponse {
 
         let version = data.get_u8();
 
-        let response_data_format =data.get_u8() & 0b00001111;
+        let response_data_format = data.get_u8() & 0b00001111;
 
         // Skip a couple bytes
         data.advance(4);
 
-        let vendor_id = String::from_utf8(data[0..8].to_vec()).unwrap().trim().to_owned();
-        let product_id = String::from_utf8(data[8..24].to_vec()).unwrap().trim().to_owned();
-        let product_revision = String::from_utf8(data[24..28].to_vec()).unwrap().trim().to_owned();
+        let vendor_id = String::from_utf8(data[0..8].to_vec())
+            .unwrap()
+            .trim()
+            .to_owned();
+        let product_id = String::from_utf8(data[8..24].to_vec())
+            .unwrap()
+            .trim()
+            .to_owned();
+        let product_revision = String::from_utf8(data[24..28].to_vec())
+            .unwrap()
+            .trim()
+            .to_owned();
 
         InquiryResponse {
             peripheral_qualifier,
@@ -221,11 +229,10 @@ impl MassStorageDevice {
         let data = if cbw.transfer_length > 0 {
             if cbw.direction == Direction::In {
                 // Receive data
-                let data = self.device.read_bulk(&self.bulk_in);
-                data
+                self.device.read_bulk(&self.bulk_in)
             } else {
                 // Send data
-                let data_out = data_out.unwrap_or(Vec::new());
+                let data_out = data_out.unwrap_or_default();
                 assert!(
                     data_out.len() == cbw.transfer_length as usize,
                     "provided data buffer is incorrect length"
@@ -330,7 +337,7 @@ pub fn main() -> anyhow::Result<()> {
         println!("{}. USB Mass Storage Device Bulk Only Transport found: device {:04x}:{:04x}, configuration {}, interface {}", i, device_descriptor.vendor_id,device_descriptor.product_id,configuration_descriptor.number, if_descriptor.interface_number);
     });
 
-        if mass_storage_interfaces.len() == 0 {
+        if mass_storage_interfaces.is_empty() {
             return Err(anyhow!("No mass storage devices found. Exiting."));
         }
 
@@ -355,10 +362,19 @@ pub fn main() -> anyhow::Result<()> {
     println!("inquiry_response {:?}", inquiry_response);
 
     println!("USB Drive Info:");
-    println!("Direct access block device: {}", inquiry_response.peripheral_device_type==0);
+    println!(
+        "Direct access block device: {}",
+        inquiry_response.peripheral_device_type == 0
+    );
     println!("Removable: {}", inquiry_response.removable_media);
-    println!("Obsolete format: {}", inquiry_response.response_data_format < 2);
-    println!("Product name: {} {} {}", inquiry_response.vendor_id, inquiry_response.product_id, inquiry_response.product_revision);
+    println!(
+        "Obsolete format: {}",
+        inquiry_response.response_data_format < 2
+    );
+    println!(
+        "Product name: {} {} {}",
+        inquiry_response.vendor_id, inquiry_response.product_id, inquiry_response.product_revision
+    );
 
     Ok(())
 }
