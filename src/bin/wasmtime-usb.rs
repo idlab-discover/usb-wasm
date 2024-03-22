@@ -30,9 +30,8 @@ fn main() -> anyhow::Result<()> {
 
     // Load the component (should be an instance of the wasi command component)
     let component = Component::from_file(&engine, command_component_path)?;
-    let (bindings, _instance) = wasmtime_wasi::command::sync::Command::instantiate(
-        &mut store, &component, &linker,
-    )?;
+    let (bindings, _instance) =
+        wasmtime_wasi::command::sync::Command::instantiate(&mut store, &component, &linker)?;
 
     // Here our `greet` function doesn't take any parameters for the component,
     // but in the Wasmtime embedding API the first argument is always a `Store`.
@@ -42,7 +41,11 @@ fn main() -> anyhow::Result<()> {
     match result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(())) => Err(anyhow!("inner error")), // IDK HOW THIS IS CAUSED
-        Err(_) => {
+        Err(e) => {
+            println!("e: {}", e);
+            if let Some(source) = e.source() {
+                println!("Source: {}", source);
+            }
             println!("Command exited unsuccessfully");
             Ok(())
         } // Command caused an error, or Host caused an error?

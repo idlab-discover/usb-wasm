@@ -73,6 +73,7 @@ interface device {
     }
 
     // Represents a USB configuration. A device can have multiple configurations, but only one can be active at a time.
+    // Must be dropped before parent device is dropped
     resource usb-configuration {
         descriptor: func() -> configuration-descriptor;
         interfaces: func() -> list<usb-interface>;
@@ -80,12 +81,14 @@ interface device {
 
     // Represents a USB interface.
     // This resource actually represents an *alternate* interface. An interface can have multiple alternates, but only one can be active at a time.
+    // Must be dropped before parent configuration is dropped
     resource usb-interface {
         descriptor: func() -> interface-descriptor;
         endpoints: func() -> list<usb-endpoint>;
     }
 
     // Represents a USB endpoint.
+    // Must be dropped before parent interface is dropped
     resource usb-endpoint {
         descriptor: func() -> endpoint-descriptor;
     }

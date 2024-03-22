@@ -158,19 +158,20 @@ impl InquiryResponse {
 }
 
 struct MassStorageDevice {
-    device: Rc<UsbDevice>,
-    configuration: Rc<UsbConfiguration>,
-    interface: Rc<UsbInterface>,
+    // Put endpoints first so they get dropped first, then interface, then configuration, then device
     bulk_in: UsbEndpoint,
     bulk_out: UsbEndpoint,
+    interface: UsbInterface,
+    configuration: UsbConfiguration,
+    device: UsbDevice,
     current_tag: u32,
 }
 
 impl MassStorageDevice {
     fn new(
-        device: Rc<UsbDevice>,
-        configuration: Rc<UsbConfiguration>,
-        interface: Rc<UsbInterface>,
+        device: UsbDevice,
+        configuration: UsbConfiguration,
+        interface: UsbInterface,
     ) -> Self {
         device.open();
         device.reset();
@@ -344,6 +345,9 @@ pub fn main() -> anyhow::Result<()> {
         println!("Using first device.");
         mass_storage_interfaces.swap_remove(0)
     };
+    let device = Rc::try_unwrap(device).unwrap();
+    let configuration = Rc::try_unwrap(configuration).unwrap();
+    let interface = Rc::try_unwrap(interface).unwrap();
 
     let mut msd = MassStorageDevice::new(device, configuration, interface);
 
@@ -361,18 +365,12 @@ pub fn main() -> anyhow::Result<()> {
     let inquiry_response = msd.inquiry(lun);
     println!("inquiry_response {:?}", inquiry_response);
 
-    println!("USB Drive Info:");
+    if inquiry_response.peripheral_qualifier != 0 && inquiry_response.peripheral_device_type != 0 {
+        return Err(anyhow!("Incompatible device"));
+    }
+
     println!(
-        "Direct access block device: {}",
-        inquiry_response.peripheral_device_type == 0
-    );
-    println!("Removable: {}", inquiry_response.removable_media);
-    println!(
-        "Obsolete format: {}",
-        inquiry_response.response_data_format < 2
-    );
-    println!(
-        "Product name: {} {} {}",
+        "Device name: {} {} {}",
         inquiry_response.vendor_id, inquiry_response.product_id, inquiry_response.product_revision
     );
 

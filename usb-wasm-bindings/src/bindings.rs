@@ -437,6 +437,7 @@ pub mod wadu436 {
             }
 
             /// Represents a USB configuration. A device can have multiple configurations, but only one can be active at a time.
+            /// Must be dropped before parent device is dropped
 
             #[derive(Debug)]
             #[repr(transparent)]
@@ -484,6 +485,7 @@ pub mod wadu436 {
 
             /// Represents a USB interface.
             /// This resource actually represents an *alternate* interface. An interface can have multiple alternates, but only one can be active at a time.
+            /// Must be dropped before parent configuration is dropped
 
             #[derive(Debug)]
             #[repr(transparent)]
@@ -530,6 +532,7 @@ pub mod wadu436 {
             }
 
             /// Represents a USB endpoint.
+            /// Must be dropped before parent interface is dropped
 
             #[derive(Debug)]
             #[repr(transparent)]
