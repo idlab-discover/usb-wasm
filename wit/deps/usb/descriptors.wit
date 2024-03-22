@@ -18,6 +18,8 @@ interface descriptors {
         device-class: u8,
         device-subclass: u8,
         device-protocol: u8,
+
+        max-packet-size: u8,
     }
 
     // Contains the fields of the configuration descriptor

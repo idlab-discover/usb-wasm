@@ -51,7 +51,7 @@ interface device {
         clear-halt: func(endpoint: borrow<usb-endpoint>) -> ();
 
         // Read control data from the device. The endpoint is always EP0.
-        read-control: func(request: control-setup) -> list<u8>;
+        read-control: func(request: control-setup, length: u16) -> list<u8>;
         // Write control data to the device. The endpoint is always EP0. The return value is the number of bytes written.
         write-control: func(request: control-setup, data: list<u8>) -> u64;
 

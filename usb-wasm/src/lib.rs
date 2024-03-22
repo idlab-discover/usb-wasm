@@ -10,6 +10,7 @@ wasmtime::component::bindgen!({
     }
 });
 
+use error::UsbWasmError;
 use rusb::{
     constants::LIBUSB_TRANSFER_TYPE_ISOCHRONOUS,
     ffi::{libusb_alloc_transfer, libusb_handle_events_completed, libusb_submit_transfer},
@@ -18,8 +19,9 @@ use rusb::{
 use std::{error::Error, sync::Arc, time::Duration};
 use wadu436::usb::{self, types::Direction};
 
-use wasmtime_wasi::preview2::WasiView;
+use wasmtime_wasi::WasiView;
 
+mod error;
 mod host;
 
 const TIMEOUT: Duration = Duration::from_secs(1);
@@ -65,7 +67,7 @@ extern "system" fn libusb_transfer_cb(transfer: *mut rusb::ffi::libusb_transfer)
 }
 
 impl UsbDevice {
-    pub fn enumerate() -> Result<Vec<Self>, rusb::Error> {
+    pub fn enumerate() -> Result<Vec<Self>, UsbWasmError> {
         let devices = rusb::devices()?;
 
         let mut devices_ = Vec::with_capacity(devices.len());
@@ -109,6 +111,7 @@ impl UsbDevice {
                     usb_version.minor(),
                     usb_version.sub_minor(),
                 ),
+                max_packet_size: descriptor.max_packet_size(),
             };
 
             devices_.push(UsbDevice {
@@ -122,12 +125,12 @@ impl UsbDevice {
         Ok(devices_)
     }
 
-    pub fn open(&mut self) -> Result<(), rusb::Error> {
+    pub fn open(&mut self) -> Result<(), UsbWasmError> {
         self.handle = Some(self.device.open()?);
         Ok(())
     }
 
-    pub fn active_configuration(&mut self) -> Result<UsbConfiguration, rusb::Error> {
+    pub fn active_configuration(&mut self) -> Result<UsbConfiguration, UsbWasmError> {
         let configuration = self.device.active_config_descriptor()?;
         let description = self
             .device
@@ -135,7 +138,6 @@ impl UsbDevice {
             .unwrap()
             .read_configuration_string(self.language, &configuration, TIMEOUT)
             .ok();
-        
 
         // Find the index of this configuration
         let config_index = (0..self.device.device_descriptor()?.num_configurations())
@@ -173,11 +175,11 @@ impl UsbDevice {
         }
     }
 
-    pub fn reset(&mut self) -> Result<(), rusb::Error> {
+    pub fn reset(&mut self) -> Result<(), UsbWasmError> {
         if let Some(handle) = &mut self.handle {
-            handle.reset()
+            Ok(handle.reset()?)
         } else {
-            Err(rusb::Error::InvalidParam)
+            Err(rusb::Error::InvalidParam.into())
         }
     }
 
@@ -185,14 +187,14 @@ impl UsbDevice {
         self.handle.is_some()
     }
 
-    pub fn clear_halt(&mut self, endpoint: u8) -> Result<(), rusb::Error> {
+    pub fn clear_halt(&mut self, endpoint: u8) -> Result<(), UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             handle.clear_halt(endpoint)?;
         }
         Ok(())
     }
 
-    pub fn select_configuration(&mut self, config: u8) -> Result<(), rusb::Error> {
+    pub fn select_configuration(&mut self, config: u8) -> Result<(), UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             if handle.kernel_driver_active(0)? {
                 handle.detach_kernel_driver(0).unwrap();
@@ -202,21 +204,25 @@ impl UsbDevice {
         Ok(())
     }
 
-    pub fn claim_interface(&mut self, interface: u8) -> Result<(), rusb::Error> {
+    pub fn claim_interface(&mut self, interface: u8) -> Result<(), UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             handle.claim_interface(interface)?;
         }
         Ok(())
     }
 
-    pub fn release_interface(&mut self, interface: u8) -> Result<(), rusb::Error> {
+    pub fn release_interface(&mut self, interface: u8) -> Result<(), UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             handle.release_interface(interface)?;
         }
         Ok(())
     }
 
-    pub fn set_alternate_setting(&mut self, interface: u8, setting: u8) -> Result<(), rusb::Error> {
+    pub fn set_alternate_setting(
+        &mut self,
+        interface: u8,
+        setting: u8,
+    ) -> Result<(), UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             handle.set_alternate_setting(interface, setting)?;
         }
@@ -227,7 +233,7 @@ impl UsbDevice {
         &mut self,
         endpoint: u8,
         buffer_size: usize,
-    ) -> Result<Vec<u8>, rusb::Error> {
+    ) -> Result<Vec<u8>, UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             let mut buffer = vec![0; buffer_size];
             let _bytes_read = handle
@@ -236,8 +242,7 @@ impl UsbDevice {
             buffer.resize(_bytes_read, 0);
             Ok(buffer)
         } else {
-            // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 
@@ -245,15 +250,12 @@ impl UsbDevice {
         &mut self,
         endpoint: u8,
         buffer: &[u8],
-    ) -> Result<usize, rusb::Error> {
+    ) -> Result<usize, UsbWasmError> {
         if let Some(handle) = &mut self.handle {
-            let bytes_written = handle
-                .write_interrupt(endpoint, buffer, TIMEOUT)
-                .unwrap();
+            let bytes_written = handle.write_interrupt(endpoint, buffer, TIMEOUT).unwrap();
             Ok(bytes_written)
         } else {
-            // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 
@@ -261,29 +263,27 @@ impl UsbDevice {
         &mut self,
         endpoint: u8,
         buffer_size: usize,
-    ) -> Result<Vec<u8>, rusb::Error> {
+    ) -> Result<Vec<u8>, UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             let mut buffer = vec![0; buffer_size];
-            let _bytes_read = handle
-                .read_bulk(endpoint, &mut buffer, TIMEOUT)
-                .unwrap();
+            let _bytes_read = handle.read_bulk(endpoint, &mut buffer, TIMEOUT).unwrap();
             buffer.resize(_bytes_read, 0);
             Ok(buffer)
         } else {
-            // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 
-    pub fn bulk_transfer_out(&mut self, endpoint: u8, buffer: &[u8]) -> Result<usize, rusb::Error> {
+    pub fn bulk_transfer_out(
+        &mut self,
+        endpoint: u8,
+        buffer: &[u8],
+    ) -> Result<usize, UsbWasmError> {
         if let Some(handle) = &mut self.handle {
-            let bytes_written = handle
-                .write_bulk(endpoint, buffer, TIMEOUT)
-                .unwrap();
+            let bytes_written = handle.write_bulk(endpoint, buffer, TIMEOUT).unwrap();
             Ok(bytes_written)
         } else {
-            // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 
@@ -292,13 +292,13 @@ impl UsbDevice {
         endpoint: u8,
         num_packets: i32,
         buffer_size: usize,
-    ) -> Result<Vec<Vec<u8>>, rusb::Error> {
+    ) -> Result<Vec<Vec<u8>>, UsbWasmError> {
         if num_packets < 0 {
             // Error
-            return Err(rusb::Error::InvalidParam);
+            return Err(rusb::Error::InvalidParam.into());
         }
         if let Some(handle) = &mut self.handle {
-            let transfer = unsafe { libusb_alloc_transfer(1) };
+            let transfer = unsafe { libusb_alloc_transfer(num_packets) };
             let transfer_ref = unsafe { &mut *transfer };
 
             let mut completed = 0_i32;
@@ -325,7 +325,7 @@ impl UsbDevice {
 
             let err = unsafe { libusb_submit_transfer(transfer) };
             if err != 0 {
-                return Err(error_from_libusb(err));
+                return Err(error_from_libusb(err).into());
             }
 
             let mut err = 0;
@@ -335,7 +335,7 @@ impl UsbDevice {
                 }
             };
             if err != 0 {
-                return Err(error_from_libusb(err));
+                return Err(error_from_libusb(err).into());
             }
 
             let mut output_data = Vec::with_capacity(num_packets as usize);
@@ -355,8 +355,7 @@ impl UsbDevice {
 
             Ok(output_data)
         } else {
-            // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 
@@ -364,7 +363,7 @@ impl UsbDevice {
         &mut self,
         endpoint: u8,
         buffers: &[Vec<u8>],
-    ) -> Result<u64, rusb::Error> {
+    ) -> Result<u64, UsbWasmError> {
         if let Some(handle) = &mut self.handle {
             let transfer = unsafe { libusb_alloc_transfer(1) };
             let transfer_ref = unsafe { &mut *transfer };
@@ -396,7 +395,7 @@ impl UsbDevice {
 
             let err = unsafe { libusb_submit_transfer(transfer) };
             if err != 0 {
-                return Err(error_from_libusb(err));
+                return Err(error_from_libusb(err).into());
             }
 
             let mut err = 0;
@@ -406,7 +405,7 @@ impl UsbDevice {
                 }
             };
             if err != 0 {
-                return Err(error_from_libusb(err));
+                return Err(error_from_libusb(err).into());
             }
 
             let mut bytes_written: u64 = 0;
@@ -424,11 +423,15 @@ impl UsbDevice {
             Ok(bytes_written)
         } else {
             // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 
-    pub fn control_transfer_in(&mut self, setup: ControlSetup) -> Result<Vec<u8>, rusb::Error> {
+    pub fn control_transfer_in(
+        &mut self,
+        setup: ControlSetup,
+        length: u16,
+    ) -> Result<Vec<u8>, UsbWasmError> {
         if let Some(handle) = &self.handle {
             let request_type = rusb::request_type(
                 rusb::Direction::In,
@@ -439,16 +442,17 @@ impl UsbDevice {
             // High and Full speed: 64 bytes
             // Super speed: 512 bytes
             // Not sure for super speed plus?
-            let mut buffer = match self.device.speed() {
-                rusb::Speed::Low => vec![0; 8],
-                rusb::Speed::High | rusb::Speed::Full => vec![0; 64],
-                rusb::Speed::Super | rusb::Speed::SuperPlus | rusb::Speed::Unknown => {
-                    vec![0; 512]
-                } // Assume highest buffer needed for unknown speed
-                _ => {
-                    vec![0; 512]
-                } // Assume highest buffer needed for non-exhaustive checks
-            };
+            // let mut buffer = match self.device.speed() {
+            //     rusb::Speed::Low => vec![0; 8],
+            //     rusb::Speed::High | rusb::Speed::Full => vec![0; 64],
+            //     rusb::Speed::Super | rusb::Speed::SuperPlus | rusb::Speed::Unknown => {
+            //         vec![0; 512]
+            //     } // Assume highest buffer needed for unknown speed
+            //     _ => {
+            //         vec![0; 512]
+            //     } // Assume highest buffer needed for non-exhaustive checks
+            // };
+            let mut buffer = vec![0; length as usize];
             let bytes_read = handle.read_control(
                 request_type,
                 setup.request,
@@ -460,8 +464,7 @@ impl UsbDevice {
             buffer.truncate(bytes_read);
             Ok(buffer)
         } else {
-            // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 
@@ -469,7 +472,7 @@ impl UsbDevice {
         &mut self,
         setup: ControlSetup,
         data: &[u8],
-    ) -> Result<u64, rusb::Error> {
+    ) -> Result<u64, UsbWasmError> {
         if let Some(handle) = &self.handle {
             let request_type = rusb::request_type(
                 rusb::Direction::Out,
@@ -486,8 +489,7 @@ impl UsbDevice {
             )?;
             Ok(bytes_written as u64)
         } else {
-            // TODO: fix a proper error here
-            Err(rusb::Error::Io)
+            Err(UsbWasmError::DeviceNotOpened)
         }
     }
 

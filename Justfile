@@ -14,6 +14,10 @@ control:
     just build-control
     cargo run -- ./out/control.wasm
 
+mass-storage:
+    just build-mass-storage
+    cargo run -- ./out/mass-storage.wasm
+
 build-lsusb:
     just regenerate-bindings
     cargo build -p lsusb --target=wasm32-wasi
@@ -33,6 +37,11 @@ build-control:
     just regenerate-bindings
     cargo build -p control --target=wasm32-wasi
     wasm-tools component new ./target/wasm32-wasi/debug/control.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/control.wasm
+
+build-mass-storage:
+    just regenerate-bindings
+    cargo build -p mass-storage --target=wasm32-wasi
+    wasm-tools component new ./target/wasm32-wasi/debug/mass-storage.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/mass-storage.wasm
 
 verify:
     wit-bindgen markdown wit/ --out-dir ./out/wit-md/

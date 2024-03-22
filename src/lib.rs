@@ -1,4 +1,4 @@
-use wasmtime_wasi::preview2::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 
 pub struct HostState {
     wasi_ctx: WasiCtx,

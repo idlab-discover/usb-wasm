@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_usb_cli::HostState;
-use wasmtime_wasi::preview2::WasiView;
+use wasmtime_wasi::WasiView;
 
 fn main() -> anyhow::Result<()> {
     // TODO create a proper CLI here
@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
 
     // Load the component (should be an instance of the wasi command component)
     let component = Component::from_file(&engine, command_component_path)?;
-    let (bindings, _instance) = wasmtime_wasi::preview2::command::sync::Command::instantiate(
+    let (bindings, _instance) = wasmtime_wasi::command::sync::Command::instantiate(
         &mut store, &component, &linker,
     )?;
 
@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn register_host_components<T: WasiView>(linker: &mut Linker<T>) -> anyhow::Result<()> {
-    wasmtime_wasi::preview2::command::sync::add_to_linker(linker)?;
+    wasmtime_wasi::command::sync::add_to_linker(linker)?;
     usb_wasm::add_to_linker(linker)?;
 
     Ok(())

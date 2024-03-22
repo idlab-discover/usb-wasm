@@ -23,7 +23,7 @@ pub fn main() -> anyhow::Result<()> {
         request: 0x06,
         value: 0x0100,
         index: 0,
-    });
+    }, 64);
 
     println!("Device Descriptor: {:?}", response);
 

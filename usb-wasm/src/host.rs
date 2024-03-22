@@ -1,4 +1,4 @@
-use wasmtime_wasi::preview2::WasiView;
+use wasmtime_wasi::WasiView;
 
 use crate::wadu436::usb::device::*;
 use crate::wadu436::usb::types::{ControlSetupRecipient, ControlSetupType};
@@ -312,11 +312,12 @@ impl<T: WasiView> HostUsbDevice for T {
         &mut self,
         rep: wasmtime::component::Resource<UsbDevice>,
         request: ControlSetup,
+        length: u16,
     ) -> wasmtime::Result<Vec<u8>> {
         let table = self.table();
         let device = table.get_mut(&rep)?;
         let setup = host_control_setup_to_rusb(&request);
-        let data = device.control_transfer_in(setup).unwrap();
+        let data = device.control_transfer_in(setup, length).unwrap();
         Ok(data)
     }
 

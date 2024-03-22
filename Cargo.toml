@@ -22,6 +22,7 @@ members = [
     "command-components/lsusb",
     "command-components/ping",
     "command-components/xbox",
+    "command-components/mass-storage",
     "usb-wasm",
     "usb-wasm-bindings",
 ]
@@ -31,8 +32,8 @@ usb-wasm = { path = "usb-wasm" }
 usb-wasm-bindings = { path = "usb-wasm-bindings" }
 
 anyhow = "1.0.75"
-wasmtime = "18.0.1"
-wasmtime-wasi = "18.0.1"
+wasmtime = "19.0.0"
+wasmtime-wasi = "19.0.0"
 
 [profile.release]
 strip = true
