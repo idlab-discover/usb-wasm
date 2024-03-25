@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
+use tracing::{debug, info, trace, Level};
 use usb_wasm_bindings::{
     descriptors::TransferType,
     device::{UsbConfiguration, UsbDevice, UsbEndpoint, UsbInterface},
@@ -118,11 +119,7 @@ impl InquiryResponse {
         let peripheral_qualifier = (peripheral & 0b11100000) >> 5;
         let peripheral_device_type = peripheral & 0b00011111;
 
-        println!("peripheral_qualifier, {}", peripheral_qualifier);
-        println!("peripheral_device_type, {}", peripheral_device_type);
-
         let removable_media = (data.get_u8() & 0b10000000) != 0;
-        println!("removable media: {}", removable_media);
 
         let version = data.get_u8();
 
@@ -157,6 +154,29 @@ impl InquiryResponse {
     }
 }
 
+#[derive(Debug)]
+struct ReadCapacityResponse {
+    returned_logical_block_address: u32,
+    block_length_in_bytes: u32,
+    capacity_in_bytes: u64,
+}
+
+impl ReadCapacityResponse {
+    fn from_bytes(data: &[u8]) -> Self {
+        let mut data = Bytes::copy_from_slice(data);
+        let returned_logical_block_address = data.get_u32();
+        let block_length_in_bytes = data.get_u32();
+        let capacity_in_bytes: u64 =
+            returned_logical_block_address as u64 * block_length_in_bytes as u64;
+
+        Self {
+            block_length_in_bytes,
+            returned_logical_block_address,
+            capacity_in_bytes,
+        }
+    }
+}
+
 struct MassStorageDevice {
     // Put endpoints first so they get dropped first, then interface, then configuration, then device
     bulk_in: UsbEndpoint,
@@ -168,11 +188,7 @@ struct MassStorageDevice {
 }
 
 impl MassStorageDevice {
-    fn new(
-        device: UsbDevice,
-        configuration: UsbConfiguration,
-        interface: UsbInterface,
-    ) -> Self {
+    fn new(device: UsbDevice, configuration: UsbConfiguration, interface: UsbInterface) -> Self {
         device.open();
         device.reset();
         device.select_configuration(&configuration);
@@ -217,9 +233,9 @@ impl MassStorageDevice {
         cbw: CommandBlockWrapper,
         data_out: Option<Vec<u8>>,
     ) -> (CommandStatusWrapper, Vec<u8>) {
-        println!("Sending Command Block: {:?}", cbw);
+        debug!("Sending Command Block: {:?}", cbw);
         let cbw_bytes = cbw.to_bytes();
-        println!("CBW Bytes: {:?}", cbw_bytes);
+        trace!("CBW Bytes: {:?}", cbw_bytes);
         self.device.write_bulk(&self.bulk_out, &cbw_bytes);
 
         // TODO: implement proper error recovery
@@ -247,7 +263,7 @@ impl MassStorageDevice {
 
         let csw_bytes = self.device.read_bulk(&self.bulk_in);
         let csw = CommandStatusWrapper::from_bytes(csw_bytes);
-        println!("Received Command Block: {:?}", csw);
+        debug!("Received Command Block: {:?}", csw);
         (csw, data)
     }
 
@@ -302,18 +318,71 @@ impl MassStorageDevice {
             todo!("Handle command failure")
         }
 
-        println!("Data: {:?}", data);
         InquiryResponse::from_bytes(&data)
+    }
+
+    fn read_capacity(&mut self, lun: u8) -> ReadCapacityResponse {
+        let cbw = CommandBlockWrapper {
+            tag: self.get_tag(),
+            transfer_length: 8,
+            direction: Direction::In,
+            lun,
+            cbwcb: vec![0x25, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+        };
+
+        let (csw, data) = self.send_command_block(cbw, None);
+        if csw.status != CommandStatusWrapperStatus::CommandPassed {
+            todo!("Handle command failure")
+        }
+
+        ReadCapacityResponse::from_bytes(&data)
+    }
+
+    fn read(&mut self, lun: u8, address: u32, blocks: u32) {
+        let cbw = CommandBlockWrapper {
+            tag: self.get_tag(),
+            transfer_length: 8,
+            direction: Direction::In,
+            lun,
+            cbwcb: vec![0x28, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+        };
+
+        let (csw, data) = self.send_command_block(cbw, None);
+        if csw.status != CommandStatusWrapperStatus::CommandPassed {
+            todo!("Handle command failure")
+        }
+
+        // ReadCapacityResponse::from_bytes(&data)
     }
 }
 
+fn human_readable_file_size(size_in_bytes: u64, decimal_places: usize) -> String {
+    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
+
+    let mut size = size_in_bytes as f64;
+
+    let mut i = 0;
+
+    while i < (units.len() - 1) && size > 1024.0 {
+        size /= 1024.0;
+        i += 1;
+    }
+
+    format!("{:.1$} {2}", size, decimal_places, units[i])
+}
+
 pub fn main() -> anyhow::Result<()> {
+    // Set up logging
+    tracing_subscriber::fmt()
+        .with_max_level(Level::TRACE)
+        .init();
+
     // Find device
-    let (device, configuration, interface) = {
+    let (interface, configuration, device) = {
         let mut mass_storage_interfaces: Vec<(
-            Rc<UsbDevice>,
-            Rc<UsbConfiguration>,
             Rc<UsbInterface>,
+            Rc<UsbConfiguration>,
+            Rc<UsbDevice>,
         )> = Vec::new();
         for device in UsbDevice::enumerate().into_iter().map(Rc::new) {
             for configuration in device.configurations().into_iter().map(Rc::new) {
@@ -323,26 +392,27 @@ pub fn main() -> anyhow::Result<()> {
                         && if_descriptor.interface_protocol == 0x50
                     {
                         mass_storage_interfaces.push((
-                            device.clone(),
-                            configuration.clone(),
                             interface,
+                            configuration.clone(),
+                            device.clone(),
                         ));
                     }
                 }
             }
         }
-        mass_storage_interfaces.iter().enumerate().for_each(|(i,(device,configuration,interface))| {
-        let device_descriptor = device.descriptor();
-        let configuration_descriptor = configuration.descriptor();
-        let if_descriptor = interface.descriptor();
-        println!("{}. USB Mass Storage Device Bulk Only Transport found: device {:04x}:{:04x}, configuration {}, interface {}", i, device_descriptor.vendor_id,device_descriptor.product_id,configuration_descriptor.number, if_descriptor.interface_number);
-    });
+
+        mass_storage_interfaces.iter().enumerate().for_each(|(i, (interface,configuration,device))| {
+            let device_descriptor = device.descriptor();
+            let configuration_descriptor = configuration.descriptor();
+            let if_descriptor = interface.descriptor();
+            info!("{}. USB Mass Storage Device Bulk Only Transport found: device {:04x}:{:04x} ({} {}), configuration {}, interface {}", i, device_descriptor.vendor_id, device_descriptor.product_id,  device_descriptor.manufacturer_name.unwrap_or_default(), device_descriptor.product_name.unwrap_or_default(), configuration_descriptor.number, if_descriptor.interface_number);
+        });
 
         if mass_storage_interfaces.is_empty() {
             return Err(anyhow!("No mass storage devices found. Exiting."));
         }
 
-        println!("Using first device.");
+        info!("Using first device.");
         mass_storage_interfaces.swap_remove(0)
     };
     let device = Rc::try_unwrap(device).unwrap();
@@ -352,7 +422,7 @@ pub fn main() -> anyhow::Result<()> {
     let mut msd = MassStorageDevice::new(device, configuration, interface);
 
     let max_lun = msd.get_max_lun();
-    println!("max lun: {}", max_lun);
+    debug!("Max LUN: {}", max_lun);
     let lun = 0;
 
     // Check if the device is ready to read/write
@@ -360,19 +430,24 @@ pub fn main() -> anyhow::Result<()> {
     if !ready {
         return Err(anyhow!("Device is not ready"));
     }
-    println!("Device is ready");
 
     let inquiry_response = msd.inquiry(lun);
-    println!("inquiry_response {:?}", inquiry_response);
 
     if inquiry_response.peripheral_qualifier != 0 && inquiry_response.peripheral_device_type != 0 {
         return Err(anyhow!("Incompatible device"));
     }
 
-    println!(
-        "Device name: {} {} {}",
-        inquiry_response.vendor_id, inquiry_response.product_id, inquiry_response.product_revision
+    let capacity = msd.read_capacity(lun);
+
+    info!(
+        "Device name: {} {}",
+        inquiry_response.vendor_id, inquiry_response.product_id,
     );
+    info!(
+        "Capacity: {}",
+        human_readable_file_size(capacity.capacity_in_bytes, 2),
+    );
+    info!("Block size: {}B", capacity.block_length_in_bytes);
 
     Ok(())
 }

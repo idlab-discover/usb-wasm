@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_usb_cli::HostState;
-use wasmtime_wasi::WasiView;
+use wasmtime_wasi::{I32Exit, WasiView};
 
 fn main() -> anyhow::Result<()> {
     // TODO create a proper CLI here
@@ -42,13 +42,16 @@ fn main() -> anyhow::Result<()> {
         Ok(Ok(())) => Ok(()),
         Ok(Err(())) => Err(anyhow!("inner error")), // IDK HOW THIS IS CAUSED
         Err(e) => {
-            println!("e: {}", e);
             if let Some(source) = e.source() {
+                if let Some(exit_code) = source.downcast_ref::<I32Exit>() {
+                    std::process::exit(exit_code.process_exit_code());
+                    // return Err(exit_code.into());
+                }
                 println!("Source: {}", source);
             }
-            println!("Command exited unsuccessfully");
+            println!("e: {}", e);
             Ok(())
-        } // Command caused an error, or Host caused an error?
+        }
     }
 }
 
