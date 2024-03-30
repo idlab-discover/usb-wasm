@@ -18,6 +18,7 @@ fn main() -> anyhow::Result<()> {
     let config = {
         let mut config = Config::new();
         config.wasm_component_model(true);
+        config.profiler(wasmtime::ProfilingStrategy::PerfMap);
         config
     };
     let engine = Engine::new(&config)?;

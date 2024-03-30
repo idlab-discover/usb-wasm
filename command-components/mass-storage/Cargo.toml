@@ -5,10 +5,19 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+
+[[bin]]
+name = "mass-storage"
+
 [dependencies]
 anyhow = { workspace = true }
+bufstream = "0.1.4"
 bytes = "1.5.0"
+fatfs = "0.3.6"
+fscommon = "0.1.1"
+mbrman = "0.5.2"
 thiserror = "1.0.58"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-usb-wasm-bindings = { workspace = true, features = ["traits"]}
+usb-wasm-bindings = { workspace = true, features = ["traits"] }
