@@ -1192,7 +1192,7 @@ pub mod wadu436 {
             impl UsbDevice {
                 #[allow(unused_unsafe, clippy::all)]
                 /// Read data from an interrupt endpoint. The endpoint must be an interrupt endpoint.
-                pub fn read_interrupt(&self, endpoint: &UsbEndpoint) -> _rt::Vec<u8> {
+                pub fn read_interrupt(&self, endpoint: &UsbEndpoint, length: u64) -> _rt::Vec<u8> {
                     unsafe {
                         #[repr(align(4))]
                         struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -1202,14 +1202,19 @@ pub mod wadu436 {
                         #[link(wasm_import_module = "wadu436:usb/device@0.0.1")]
                         extern "C" {
                             #[link_name = "[method]usb-device.read-interrupt"]
-                            fn wit_import(_: i32, _: i32, _: *mut u8);
+                            fn wit_import(_: i32, _: i32, _: i64, _: *mut u8);
                         }
 
                         #[cfg(not(target_arch = "wasm32"))]
-                        fn wit_import(_: i32, _: i32, _: *mut u8) {
+                        fn wit_import(_: i32, _: i32, _: i64, _: *mut u8) {
                             unreachable!()
                         }
-                        wit_import((self).handle() as i32, (endpoint).handle() as i32, ptr0);
+                        wit_import(
+                            (self).handle() as i32,
+                            (endpoint).handle() as i32,
+                            _rt::as_i64(&length),
+                            ptr0,
+                        );
                         let l1 = *ptr0.add(0).cast::<*mut u8>();
                         let l2 = *ptr0.add(4).cast::<usize>();
                         let len3 = l2;
@@ -1250,7 +1255,7 @@ pub mod wadu436 {
             impl UsbDevice {
                 #[allow(unused_unsafe, clippy::all)]
                 /// Read data from a bulk endpoint. The endpoint must be a bulk endpoint.
-                pub fn read_bulk(&self, endpoint: &UsbEndpoint) -> _rt::Vec<u8> {
+                pub fn read_bulk(&self, endpoint: &UsbEndpoint, length: u64) -> _rt::Vec<u8> {
                     unsafe {
                         #[repr(align(4))]
                         struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -1260,14 +1265,19 @@ pub mod wadu436 {
                         #[link(wasm_import_module = "wadu436:usb/device@0.0.1")]
                         extern "C" {
                             #[link_name = "[method]usb-device.read-bulk"]
-                            fn wit_import(_: i32, _: i32, _: *mut u8);
+                            fn wit_import(_: i32, _: i32, _: i64, _: *mut u8);
                         }
 
                         #[cfg(not(target_arch = "wasm32"))]
-                        fn wit_import(_: i32, _: i32, _: *mut u8) {
+                        fn wit_import(_: i32, _: i32, _: i64, _: *mut u8) {
                             unreachable!()
                         }
-                        wit_import((self).handle() as i32, (endpoint).handle() as i32, ptr0);
+                        wit_import(
+                            (self).handle() as i32,
+                            (endpoint).handle() as i32,
+                            _rt::as_i64(&length),
+                            ptr0,
+                        );
                         let l1 = *ptr0.add(0).cast::<*mut u8>();
                         let l2 = *ptr0.add(4).cast::<usize>();
                         let len3 = l2;
@@ -1786,6 +1796,34 @@ mod _rt {
             ::core::mem::transmute::<u8, bool>(val)
         }
     }
+
+    pub fn as_i64<T: AsI64>(t: T) -> i64 {
+        t.as_i64()
+    }
+
+    pub trait AsI64 {
+        fn as_i64(self) -> i64;
+    }
+
+    impl<'a, T: Copy + AsI64> AsI64 for &'a T {
+        fn as_i64(self) -> i64 {
+            (*self).as_i64()
+        }
+    }
+
+    impl AsI64 for i64 {
+        #[inline]
+        fn as_i64(self) -> i64 {
+            self as i64
+        }
+    }
+
+    impl AsI64 for u64 {
+        #[inline]
+        fn as_i64(self) -> i64 {
+            self as i64
+        }
+    }
     extern crate alloc as alloc_crate;
     pub use alloc_crate::alloc;
 }
@@ -1793,8 +1831,8 @@ mod _rt {
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.21.0:bindings:encoded worldrust-wasi-from-crates-io"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 3177] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xea\x17\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 3206] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x87\x18\x01A\x02\x01\
 A\x12\x01B\x13\x01o\x03}}}\x04\0\x07version\x03\0\0\x01k{\x01k}\x01ks\x01r\x06\x09\
 vendor-id\x02\x0aproduct-id\x02\x0aclass-code\x03\x0dsubclass-code\x03\x0dprotoc\
 ol-code\x03\x0dserial-number\x04\x04\0\x06filter\x03\0\x05\x01m\x04\x07control\x0b\
@@ -1820,7 +1858,7 @@ number}\x09direction\x03\x0dtransfer-type\x05\x0fmax-packet-size{\x08interval}\x
 \x04\x02\x03\0\x01\x11device-descriptor\x02\x03\0\x01\x18configuration-descripto\
 r\x02\x03\0\x01\x14interface-descriptor\x02\x03\0\x01\x13endpoint-descriptor\x02\
 \x03\0\0\x05speed\x02\x03\0\0\x06filter\x02\x03\0\0\x12control-setup-type\x02\x03\
-\0\0\x17control-setup-recipient\x02\x03\0\0\x0dcontrol-setup\x01BS\x02\x03\x02\x01\
+\0\0\x17control-setup-recipient\x02\x03\0\0\x0dcontrol-setup\x01BT\x02\x03\x02\x01\
 \x05\x04\0\x11device-descriptor\x03\0\0\x02\x03\x02\x01\x06\x04\0\x18configurati\
 on-descriptor\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x14interface-descriptor\x03\0\x04\
 \x02\x03\x02\x01\x08\x04\0\x13endpoint-descriptor\x03\0\x06\x02\x03\x02\x01\x09\x04\
@@ -1843,19 +1881,20 @@ ace&\x01\0\x04\0\"[method]usb-device.claim-interface\x01'\x04\0$[method]usb-devi
 ce.release-interface\x01'\x01h\x15\x01@\x02\x04self\x1b\x08endpoint(\x01\0\x04\0\
 \x1d[method]usb-device.clear-halt\x01)\x01p}\x01@\x03\x04self\x1b\x07request\x11\
 \x06length{\0*\x04\0\x1f[method]usb-device.read-control\x01+\x01@\x03\x04self\x1b\
-\x07request\x11\x04data*\0w\x04\0\x20[method]usb-device.write-control\x01,\x01@\x02\
-\x04self\x1b\x08endpoint(\0*\x04\0![method]usb-device.read-interrupt\x01-\x01@\x03\
-\x04self\x1b\x08endpoint(\x04data*\0w\x04\0\"[method]usb-device.write-interrupt\x01\
-.\x04\0\x1c[method]usb-device.read-bulk\x01-\x04\0\x1d[method]usb-device.write-b\
-ulk\x01.\x04\0#[method]usb-device.read-isochronous\x01-\x04\0$[method]usb-device\
-.write-isochronous\x01.\x01@\x01\x04self$\0\x03\x04\0$[method]usb-configuration.\
-descriptor\x01/\x01i\x14\x01p0\x01@\x01\x04self$\01\x04\0$[method]usb-configurat\
-ion.interfaces\x012\x01@\x01\x04self&\0\x05\x04\0\x20[method]usb-interface.descr\
-iptor\x013\x01i\x15\x01p4\x01@\x01\x04self&\05\x04\0\x1f[method]usb-interface.en\
-dpoints\x016\x01@\x01\x04self(\0\x07\x04\0\x1f[method]usb-endpoint.descriptor\x01\
-7\x03\x01\x18wadu436:usb/device@0.0.1\x05\x0e\x04\x01\x1dwadu436:usb-bindings/bi\
-ndings\x04\0\x0b\x0e\x01\0\x08bindings\x03\0\0\0G\x09producers\x01\x0cprocessed-\
-by\x02\x0dwit-component\x070.201.0\x10wit-bindgen-rust\x060.21.0";
+\x07request\x11\x04data*\0w\x04\0\x20[method]usb-device.write-control\x01,\x01@\x03\
+\x04self\x1b\x08endpoint(\x06lengthw\0*\x04\0![method]usb-device.read-interrupt\x01\
+-\x01@\x03\x04self\x1b\x08endpoint(\x04data*\0w\x04\0\"[method]usb-device.write-\
+interrupt\x01.\x04\0\x1c[method]usb-device.read-bulk\x01-\x04\0\x1d[method]usb-d\
+evice.write-bulk\x01.\x01@\x02\x04self\x1b\x08endpoint(\0*\x04\0#[method]usb-dev\
+ice.read-isochronous\x01/\x04\0$[method]usb-device.write-isochronous\x01.\x01@\x01\
+\x04self$\0\x03\x04\0$[method]usb-configuration.descriptor\x010\x01i\x14\x01p1\x01\
+@\x01\x04self$\02\x04\0$[method]usb-configuration.interfaces\x013\x01@\x01\x04se\
+lf&\0\x05\x04\0\x20[method]usb-interface.descriptor\x014\x01i\x15\x01p5\x01@\x01\
+\x04self&\06\x04\0\x1f[method]usb-interface.endpoints\x017\x01@\x01\x04self(\0\x07\
+\x04\0\x1f[method]usb-endpoint.descriptor\x018\x03\x01\x18wadu436:usb/device@0.0\
+.1\x05\x0e\x04\x01\x1dwadu436:usb-bindings/bindings\x04\0\x0b\x0e\x01\0\x08bindi\
+ngs\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.201.0\x10\
+wit-bindgen-rust\x060.21.0";
 
 #[inline(never)]
 #[doc(hidden)]

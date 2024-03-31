@@ -330,8 +330,9 @@ impl Write for MassStorageDevice {
         );
 
         let mut data = vec![0_u8; num_blocks as usize * 512];
+        let data_len = data.len();
         data[0..512].copy_from_slice(&first_block);
-        data[(num_blocks as usize - 1) * 512..].copy_from_slice(&last_block);
+        data[data_len - 512..data_len].copy_from_slice(&last_block);
         // println!("Data: {:x?}", data);
         // println!("buf: {:x?}", buf);
         data[offset_in_start_block..offset_in_start_block + buf.len()].copy_from_slice(buf);
@@ -355,7 +356,7 @@ impl Write for MassStorageDevice {
         //     return Ok(num_bytes);
         // }
 
-        self.write_blocks(start_block as _, num_blocks, buf);
+        self.write_blocks(start_block as _, num_blocks, &data);
 
         // self.buffer = (start_block, end_block + 1, data);
 

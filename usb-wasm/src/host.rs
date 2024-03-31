@@ -176,14 +176,14 @@ impl<T: WasiView> HostUsbDevice for T {
         &mut self,
         rep: wasmtime::component::Resource<UsbDevice>,
         endpoint: wasmtime::component::Resource<UsbEndpoint>,
+        length: u64,
     ) -> wasmtime::Result<Vec<u8>> {
         let table = self.table();
         let ep = table.get(&endpoint)?;
         let address = ep.get_endpoint_number();
-        let buffer_size = ep.descriptor.max_packet_size;
         let device = table.get_mut(&rep)?;
         let data = device
-            .interrupt_transfer_in(address, buffer_size.into())
+            .interrupt_transfer_in(address, length as usize)
             .unwrap();
         Ok(data)
     }
@@ -206,6 +206,7 @@ impl<T: WasiView> HostUsbDevice for T {
         &mut self,
         rep: wasmtime::component::Resource<UsbDevice>,
         endpoint: wasmtime::component::Resource<UsbEndpoint>,
+        length: u64,
     ) -> wasmtime::Result<Vec<u8>> {
         let table = self.table();
         let ep = table.get(&endpoint)?;
@@ -214,11 +215,8 @@ impl<T: WasiView> HostUsbDevice for T {
                 crate::wadu436::usb::types::Direction::Out => 0x00,
                 crate::wadu436::usb::types::Direction::In => 0x80,
             };
-        let buffer_size = ep.descriptor.max_packet_size;
         let device = table.get_mut(&rep)?;
-        let data = device
-            .bulk_transfer_in(address, buffer_size.into())
-            .unwrap();
+        let data = device.bulk_transfer_in(address, length as usize).unwrap();
         Ok(data)
     }
 

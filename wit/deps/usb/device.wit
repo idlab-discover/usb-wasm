@@ -56,12 +56,12 @@ interface device {
         write-control: func(request: control-setup, data: list<u8>) -> u64;
 
         // Read data from an interrupt endpoint. The endpoint must be an interrupt endpoint.
-        read-interrupt: func(endpoint: borrow<usb-endpoint>) -> list<u8>;
+        read-interrupt: func(endpoint: borrow<usb-endpoint>, length: u64) -> list<u8>;
         // Write data to an interrupt endpoint. The endpoint must be an interrupt endpoint. The return value is the number of bytes written.
         write-interrupt: func(endpoint: borrow<usb-endpoint>, data: list<u8>) -> u64;
 
         // Read data from a bulk endpoint. The endpoint must be a bulk endpoint.
-        read-bulk: func(endpoint: borrow<usb-endpoint>) -> list<u8>;
+        read-bulk: func(endpoint: borrow<usb-endpoint>, length: u64) -> list<u8>;
         // Write data to a bulk endpoint. The endpoint must be a bulk endpoint. The return value is the number of bytes written.
         write-bulk: func(endpoint: borrow<usb-endpoint>, data: list<u8>) -> u64;
 

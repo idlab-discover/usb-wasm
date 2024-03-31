@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use thiserror::Error;
-use tracing::{debug, trace};
+use tracing::trace;
 use usb_wasm_bindings::{
     device::{UsbConfiguration, UsbDevice, UsbEndpoint, UsbInterface},
     types::{ControlSetup, ControlSetupRecipient, ControlSetupType, Direction, TransferType},
@@ -137,17 +137,11 @@ impl BulkOnlyTransportDevice {
         // then, see section 5.3.3 and Figure 2 of the USB Mass Storage Class – Bulk Only Transport document
 
         // TODO: data stage
-        let mut transfer_length = cbw.transfer_length as usize;
-        let mut data_acc: Vec<u8> = Vec::with_capacity(cbw.transfer_length as usize);
+        let transfer_length = cbw.transfer_length as usize;
+        // Receive data
+        let data = self.device.read_bulk(&self.bulk_in, transfer_length as u64);
 
-        while transfer_length > 0 {
-            // Receive data
-            let data = self.device.read_bulk(&self.bulk_in);
-            transfer_length -= data.len();
-            data_acc.extend(data);
-        }
-
-        let csw_bytes = self.device.read_bulk(&self.bulk_in);
+        let csw_bytes = self.device.read_bulk(&self.bulk_in, 13);
         let csw = CommandStatusWrapper::from_bytes(csw_bytes);
 
         if csw.tag != tag {
@@ -155,7 +149,7 @@ impl BulkOnlyTransportDevice {
         }
 
         trace!("Received Command Status: {:?}", csw);
-        Ok((csw, data_acc))
+        Ok((csw, data))
     }
 
     pub fn command_out(
@@ -190,9 +184,8 @@ impl BulkOnlyTransportDevice {
         if let Some(data) = data {
             self.device.write_bulk(&self.bulk_out, data);
         }
-        
 
-        let csw_bytes = self.device.read_bulk(&self.bulk_in);
+        let csw_bytes = self.device.read_bulk(&self.bulk_in, 13);
         let csw = CommandStatusWrapper::from_bytes(csw_bytes);
 
         if csw.tag != tag {
