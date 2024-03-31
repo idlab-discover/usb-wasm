@@ -11,6 +11,8 @@ edition = "2021"
 anyhow = { workspace = true }
 color-eyre = "0.6.2"
 serde = { version = "1.0.193", features = ["derive"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 ureq = { version = "2.9.1", features = ["json"] }
 usb-wasm = { workspace = true }
 wasmtime = { workspace = true }

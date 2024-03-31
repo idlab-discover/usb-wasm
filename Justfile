@@ -14,9 +14,9 @@ control:
     just build-control
     cargo run -- ./out/control.wasm
 
-mass-storage:
+mass-storage *arg:
     just build-mass-storage
-    cargo run --release -- ./out/mass-storage.wasm
+    cargo run --release -- ./out/mass-storage.wasm {{arg}}
 
 build-lsusb:
     just regenerate-bindings

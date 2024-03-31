@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 rusb = "0.9.3"
 thiserror = "1.0.58"
+tracing = "0.1.40"
 wasmtime = { workspace = true, features = ["component-model"] }
 wasmtime-wasi = { workspace = true }
 

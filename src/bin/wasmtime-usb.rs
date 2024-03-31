@@ -1,10 +1,14 @@
 use anyhow::anyhow;
+use tracing_subscriber::EnvFilter;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_usb_cli::HostState;
 use wasmtime_wasi::{I32Exit, WasiView};
 
 fn main() -> anyhow::Result<()> {
+    // Set up logging
+    tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
+    
     // TODO create a proper CLI here
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {

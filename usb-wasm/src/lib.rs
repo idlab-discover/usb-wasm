@@ -24,7 +24,7 @@ use wasmtime_wasi::WasiView;
 mod error;
 mod host;
 
-const TIMEOUT: Duration = Duration::from_secs(1);
+const TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct UsbDevice {
     device: rusb::Device<rusb::GlobalContext>,
@@ -126,7 +126,11 @@ impl UsbDevice {
     }
 
     pub fn open(&mut self) -> Result<(), UsbWasmError> {
-        self.handle = Some(self.device.open()?);
+        let mut handle = self.device.open()?;
+        handle.set_auto_detach_kernel_driver(true)?;
+        
+        self.handle = Some(handle);
+
         Ok(())
     }
 
@@ -196,9 +200,6 @@ impl UsbDevice {
 
     pub fn select_configuration(&mut self, config: u8) -> Result<(), UsbWasmError> {
         if let Some(handle) = &mut self.handle {
-            if handle.kernel_driver_active(0)? {
-                handle.detach_kernel_driver(0).unwrap();
-            }
             handle.set_active_configuration(config).unwrap();
         }
         Ok(())

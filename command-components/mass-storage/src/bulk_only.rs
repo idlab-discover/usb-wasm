@@ -35,7 +35,9 @@ impl BulkOnlyTransportDevice {
     ) -> Self {
         device.open();
         device.reset();
-        device.select_configuration(&configuration);
+        if device.active_configuration().descriptor().number != configuration.descriptor().number {
+            device.select_configuration(&configuration);
+        };
         device.claim_interface(&interface);
 
         // Find endpoints
@@ -120,7 +122,13 @@ impl BulkOnlyTransportDevice {
             cbwcb: command_block.command_block,
         };
 
-        debug!(tag, lun = self.selected_lun, transfer_length = command_block.transfer_length, "Sending command to device {:02x?}", cbw.cbwcb);
+        trace!(
+            tag,
+            lun = self.selected_lun,
+            transfer_length = command_block.transfer_length,
+            "Sending command to device {:02x?}",
+            cbw.cbwcb
+        );
         let cbw_bytes = cbw.to_bytes();
         self.device.write_bulk(&self.bulk_out, &cbw_bytes);
 
@@ -146,14 +154,14 @@ impl BulkOnlyTransportDevice {
             return Err(BulkOnlyTransportError::IncorrectTag);
         }
 
-        debug!("Received Command Status: {:?}", csw);
+        trace!("Received Command Status: {:?}", csw);
         Ok((csw, data_acc))
     }
 
     pub fn command_out(
         &mut self,
         command_block: BulkOnlyTransportCommandBlock,
-        data: Option<Vec<u8>>,
+        data: Option<&[u8]>,
     ) -> Result<CommandStatusWrapper, BulkOnlyTransportError> {
         let tag = self.get_tag();
         let cbw = CommandBlockWrapper {
@@ -164,7 +172,13 @@ impl BulkOnlyTransportDevice {
             cbwcb: command_block.command_block,
         };
 
-        debug!(tag, lun = self.selected_lun, transfer_length = command_block.transfer_length, "Sending command to device {:02x?}", cbw.cbwcb);
+        trace!(
+            tag,
+            lun = self.selected_lun,
+            transfer_length = command_block.transfer_length,
+            "Sending command to device {:02x?}",
+            cbw.cbwcb
+        );
         let cbw_bytes = cbw.to_bytes();
         trace!("CBW Bytes: {:?}", cbw_bytes);
         self.device.write_bulk(&self.bulk_out, &cbw_bytes);
@@ -174,10 +188,9 @@ impl BulkOnlyTransportDevice {
         // then, see section 5.3.3 and Figure 2 of the USB Mass Storage Class – Bulk Only Transport document
 
         if let Some(data) = data {
-            for chunk in data.chunks(512) {
-                self.device.write_bulk(&self.bulk_out, chunk);
-            }
+            self.device.write_bulk(&self.bulk_out, data);
         }
+        
 
         let csw_bytes = self.device.read_bulk(&self.bulk_in);
         let csw = CommandStatusWrapper::from_bytes(csw_bytes);
@@ -186,7 +199,7 @@ impl BulkOnlyTransportDevice {
             return Err(BulkOnlyTransportError::IncorrectTag);
         }
 
-        debug!("Received Command Status: {:?}", csw);
+        trace!("Received Command Status: {:?}", csw);
         Ok(csw)
     }
 
