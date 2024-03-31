@@ -26,7 +26,7 @@ fn human_readable_file_size(size_in_bytes: u64, decimal_places: usize) -> String
 
     let mut i = 0;
 
-    while i < (units.len() - 1) && size > 1024.0 {
+    while i < (units.len() - 1) && size >= 1024.0 {
         size /= 1024.0;
         i += 1;
     }
@@ -123,58 +123,77 @@ fn write<RWS: Read + Write + Seek>(slice: RWS, path: &str, contents: &[u8]) -> a
 
 fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
     // Find device
-    let (interface, configuration, device) = {
-        let mut mass_storage_interfaces: Vec<(
-            Rc<UsbInterface>,
-            Rc<UsbConfiguration>,
-            Rc<UsbDevice>,
-        )> = Vec::new();
-        for device in UsbDevice::enumerate().into_iter().map(Rc::new) {
-            for configuration in device.configurations().into_iter().map(Rc::new) {
-                for interface in configuration.interfaces().into_iter().map(Rc::new) {
-                    let if_descriptor = interface.descriptor();
-                    if if_descriptor.interface_class == 0x08
-                        && if_descriptor.interface_protocol == 0x50
-                    {
-                        mass_storage_interfaces.push((
-                            interface,
-                            configuration.clone(),
-                            device.clone(),
-                        ));
-                    }
+    let msd = {
+        let mut mass_storage_devices: Vec<MassStorageDevice> = Vec::new();
+        for device in UsbDevice::enumerate().into_iter() {
+            let configuration = device.configurations().remove(0);
+            let interface = configuration.interfaces().into_iter().find(|interface| {
+                let if_descriptor = interface.descriptor();
+                if if_descriptor.interface_class == 0x08 && if_descriptor.interface_protocol == 0x50
+                {
+                    true
+                } else {
+                    false
                 }
+            });
+            if let Some(interface) = interface {
+                let bulk_only_transport =
+                    BulkOnlyTransportDevice::new(device, configuration, interface);
+                mass_storage_devices.push(MassStorageDevice::new(bulk_only_transport).unwrap());
             }
         }
 
-        mass_storage_interfaces.iter().enumerate().for_each(|(i, (interface,configuration,device))| {
-        let device_descriptor = device.descriptor();
-        let configuration_descriptor = configuration.descriptor();
-        let if_descriptor = interface.descriptor();
-        info!("{}. USB Mass Storage Device Bulk Only Transport found: device {:04x}:{:04x} ({} {}), configuration {}, interface {}", i, device_descriptor.vendor_id, device_descriptor.product_id,  device_descriptor.manufacturer_name.unwrap_or_default(), device_descriptor.product_name.unwrap_or_default(), configuration_descriptor.number, if_descriptor.interface_number);
-    });
-
-        if mass_storage_interfaces.is_empty() {
+        if mass_storage_devices.is_empty() {
             return Err(anyhow!("No mass storage devices found. Exiting."));
         }
 
-        info!("Using first device.");
-        mass_storage_interfaces.swap_remove(0)
-    };
-    let device = Rc::try_unwrap(device).unwrap();
-    let configuration = Rc::try_unwrap(configuration).unwrap();
-    let interface = Rc::try_unwrap(interface).unwrap();
+        if mass_storage_devices.len() == 1 {
+            mass_storage_devices.remove(0)
+        } else {
+            let mut input = String::new();
+            println!("Please select a device:");
+            for (i, msd) in mass_storage_devices.iter().enumerate() {
+                let properties = msd.get_properties();
 
-    let bulk_only_transport = BulkOnlyTransportDevice::new(device, configuration, interface);
-    Ok(MassStorageDevice::new(bulk_only_transport)?)
+                println!(
+                    "{}. {} ({})",
+                    i,
+                    properties.name,
+                    human_readable_file_size(properties.capacity, 2)
+                );
+            }
+            io::stdin().read_line(&mut input)?;
+            let i: usize = input.trim().parse()?;
+            mass_storage_devices.remove(i)
+        }
+    };
+    {
+        let properties = msd.get_properties();
+        info!(
+            "Selected: {} ({})",
+            properties.name,
+            human_readable_file_size(properties.capacity, 2)
+        );
+    }
+    Ok(msd)
 }
 
-fn benchmark_raw_speed() -> anyhow::Result<()> {
+fn benchmark_raw_speed(
+    test_count: usize,
+    seq_test_size_mb: usize,
+    rnd_test_size_mb: usize,
+) -> anyhow::Result<()> {
     let mut msd = get_mass_storage_device()?;
     let properties = msd.get_properties();
 
-    let num_blocks_range = [32, 64, 128, 256, 512, 1024, 2048, 4096];
+    let num_blocks_range = [512, 1024, 2048, 4096];
+    // let num_blocks_range = [512];
+    // let num_blocks_range = [4096];
 
     let mut rng = rand::thread_rng();
+
+    let seq_test_size = seq_test_size_mb * 1024 * 1024;
+    let rnd_test_size = seq_test_size_mb * 1024 * 1024;
 
     struct Report {
         num_blocks: u32,
@@ -185,6 +204,11 @@ fn benchmark_raw_speed() -> anyhow::Result<()> {
     }
 
     info!("Starting benchmark");
+    info!(
+        "Seq Test Data: {}, Rnd Test Data: {}, ",
+        human_readable_file_size(seq_test_size_mb as u64 * 1024 * 1024, 2),
+        human_readable_file_size(rnd_test_size_mb as u64 * 1024 * 1024, 2),
+    );
     for num_blocks in num_blocks_range {
         let mut report = Report {
             num_blocks,
@@ -194,70 +218,77 @@ fn benchmark_raw_speed() -> anyhow::Result<()> {
             random_read_speed: 0.0,
         };
 
-        const NUM_REPETITIONS: u32 = 64;
+        let seq_num_repetitions: u32 =
+            ((seq_test_size / (num_blocks * 512) as usize) as u32).max(1);
 
         // Benchmark SEQUENTIAL reads and writes:
-        {
+        for _ in 0..test_count {
             let mut data = vec![0_u8; num_blocks as usize * 512];
             data[..].try_fill(&mut rng)?;
 
             let address = 0;
             // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * num_blocks);
             let start_write = std::time::Instant::now();
-            for i in 0..NUM_REPETITIONS {
+            for i in 0..seq_num_repetitions {
                 msd.write_blocks(address + i * num_blocks, num_blocks as u16, &data);
             }
             let end_write = std::time::Instant::now();
             let write_time = end_write - start_write;
-            report.sequential_write_speed =
-                (NUM_REPETITIONS as f64 * num_blocks as f64 * 512.0) / write_time.as_secs_f64();
+            report.sequential_write_speed += seq_test_size as f64 / write_time.as_secs_f64();
         }
+        report.sequential_write_speed /= test_count as f64;
 
-        {
+        for _ in 0..test_count {
             let address = 0;
             // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * num_blocks);
             let start_read = std::time::Instant::now();
-            for i in 0..NUM_REPETITIONS {
+            for i in 0..seq_num_repetitions {
                 msd.read_blocks(address + i * num_blocks, num_blocks as u16);
             }
             let end_read = std::time::Instant::now();
             let read_time = end_read - start_read;
-            report.sequential_read_speed =
-                (NUM_REPETITIONS as f64 * num_blocks as f64 * 512.0) / read_time.as_secs_f64();
+            report.sequential_read_speed += seq_test_size as f64 / read_time.as_secs_f64();
         }
+        report.sequential_read_speed /= test_count as f64;
 
+        let rnd_num_repetitions: u32 =
+            ((rnd_test_size / (num_blocks * 512) as usize) as u32).max(1);
         // Benchmark RANDOM reads and writes:
-        // {
-        //     let mut data = vec![0_u8; num_blocks as usize * 512];
-        //     data[..].try_fill(&mut rng)?;
+        for _ in 0..test_count {
+            let mut data = vec![0_u8; num_blocks as usize * 512];
+            data[..].try_fill(&mut rng)?;
 
-        //     let start_write = std::time::Instant::now();
-        //     for _ in 0..NUM_REPETITIONS {
-        //         let address = rng.gen_range(0..properties.total_number_of_blocks - num_blocks);
-        //         msd.write_blocks(address, num_blocks as u16, &data);
-        //     }
-        //     let end_write = std::time::Instant::now();
-        //     let write_time = end_write - start_write;
-        //     report.random_write_speed =
-        //         (NUM_REPETITIONS as f64 * num_blocks as f64 * 512.0) / write_time.as_secs_f64();
-        // }
+            let addresses: Vec<u32> = (0..rnd_num_repetitions)
+                .map(|_| rng.gen_range(0..properties.total_number_of_blocks - num_blocks))
+                .collect();
+            let start_write = std::time::Instant::now();
+            for address in addresses {
+                msd.write_blocks(address, num_blocks as u16, &data);
+            }
+            let end_write = std::time::Instant::now();
+            let write_time = end_write - start_write;
+            report.random_write_speed += seq_test_size as f64 / write_time.as_secs_f64();
+        }
+        report.random_write_speed /= test_count as f64;
 
-        // {
-        //     let start_read = std::time::Instant::now();
-        //     for _ in 0..NUM_REPETITIONS {
-        //         let address = rng.gen_range(0..properties.total_number_of_blocks - num_blocks);
-        //         msd.read_blocks(address, num_blocks as u16);
-        //     }
-        //     let end_read = std::time::Instant::now();
-        //     let read_time = end_read - start_read;
-        //     report.random_read_speed =
-        //         (NUM_REPETITIONS as f64 * num_blocks as f64 * 512.0) / read_time.as_secs_f64();
-        // }
+        for _ in 0..test_count {
+            let addresses: Vec<u32> = (0..rnd_num_repetitions)
+                .map(|_| rng.gen_range(0..properties.total_number_of_blocks - num_blocks))
+                .collect();
+            let start_read = std::time::Instant::now();
+            for address in addresses {
+                msd.read_blocks(address, num_blocks as u16);
+            }
+            let end_read = std::time::Instant::now();
+            let read_time = end_read - start_read;
+            report.random_read_speed += seq_test_size as f64 / read_time.as_secs_f64();
+        }
+        report.random_read_speed /= test_count as f64;
 
-        // reports.push(report);
         info!(
-            "Blocks: {}, Sequential write speed: {}/s, Sequential read speed: {}/s, Random write speed: {}/s, Random read speed: {}/s",
+            "Blocks: {} ({}): SEQ WRITE: {}/s, SEQ READ: {}/s, RND WRITE: {}/s, RND READ: {}/s",
             report.num_blocks,
+            human_readable_file_size(report.num_blocks as u64 * 512, 2),
             human_readable_file_size(report.sequential_write_speed as u64, 2),
             human_readable_file_size(report.sequential_read_speed as u64, 2),
             human_readable_file_size(report.random_write_speed as u64, 2),
@@ -337,7 +368,7 @@ pub fn main() -> anyhow::Result<()> {
     // let mut fat_slice =
     //     fscommon::StreamSlice::new(msd, partition_start_address, partition_end_address)?;
 
-    benchmark_raw_speed()?;
+    benchmark_raw_speed(2, 8, 1)?;
 
     // ls(fat_slice)?;
     // cat(fat_slice)?;

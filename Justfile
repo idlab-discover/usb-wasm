@@ -18,6 +18,10 @@ mass-storage *arg:
     just build-mass-storage
     cargo run --release -- ./out/mass-storage.wasm {{arg}}
 
+flamegraph-mass-storage:
+    just build-mass-storage
+    cargo flamegraph --no-inline --bin wasmtime-usb -- ./out/mass-storage.wasm
+
 build-lsusb:
     just regenerate-bindings
     cargo build -p lsusb --target=wasm32-wasi
