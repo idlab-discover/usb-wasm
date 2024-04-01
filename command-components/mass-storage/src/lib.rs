@@ -1,4 +1,4 @@
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 
 use bulk_only::BulkOnlyTransportDevice;
 
@@ -294,6 +294,70 @@ fn _benchmark_raw_speed(
     // for report in reports {
 
     // }
+
+    Ok(())
+}
+
+pub fn benchmark(seq_test_size_mb: usize) -> anyhow::Result<()> {
+    let fs = get_filesystem()?;
+
+    let root_dir = fs.root_dir();
+    let mut temp_file = root_dir.create_file("temp.bin")?;
+    temp_file.truncate()?;
+
+    let mut rng = rand::thread_rng();
+
+    let seq_test_size = seq_test_size_mb * 1024 * 1024;
+
+    struct Report {
+        sequential_write_speed: f64,
+        sequential_read_speed: f64,
+    }
+
+    println!("Starting benchmark");
+    println!(
+        "Seq Test Data: {}",
+        human_readable_file_size(seq_test_size_mb as u64 * 1024 * 1024, 2),
+    );
+
+    let mut report = Report {
+        sequential_write_speed: 0.0,
+        sequential_read_speed: 0.0,
+    };
+
+    // Benchmark SEQUENTIAL reads and writes:
+    {
+        let mut data = vec![0_u8; seq_test_size];
+        data[..].try_fill(&mut rng)?;
+
+        // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
+        let start_write = std::time::Instant::now();
+        temp_file.seek(io::SeekFrom::Start(0))?;
+        temp_file.write_all(&data)?;
+        let end_write = std::time::Instant::now();
+        let write_time = end_write - start_write;
+        report.sequential_write_speed = seq_test_size as f64 / write_time.as_secs_f64();
+    }
+
+    {
+        // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
+        let start_read = std::time::Instant::now();
+        let mut data = Vec::new();
+        temp_file.seek(io::SeekFrom::Start(0))?;
+        temp_file.read_to_end(&mut data)?;
+        let end_read = std::time::Instant::now();
+        let read_time = end_read - start_read;
+        report.sequential_read_speed = data.len() as f64 / read_time.as_secs_f64();
+    }
+
+    println!(
+        "SEQ WRITE: {}/s, SEQ READ: {}/s",
+        human_readable_file_size(report.sequential_write_speed as u64, 2),
+        human_readable_file_size(report.sequential_read_speed as u64, 2),
+    );
+
+    std::mem::drop(temp_file);
+    root_dir.remove("temp.bin")?;
 
     Ok(())
 }

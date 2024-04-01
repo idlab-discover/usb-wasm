@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use mass_storage::{cat, ls, tree};
+use mass_storage::{benchmark, cat, ls, tree};
 use tracing::Level;
 
 use anyhow::anyhow;
@@ -17,6 +17,7 @@ enum Command {
     Tree { path: Vec<String> },
     Ls { path: Vec<String> },
     Cat { path: Vec<String> },
+    Benchmark,
     // TODO: Copy
 }
 
@@ -38,6 +39,7 @@ pub fn main() -> anyhow::Result<()> {
         Command::Tree { path } => tree(vec_to_opt_str(path))?,
         Command::Ls { path } => ls(vec_to_opt_str(path))?,
         Command::Cat { path } => cat(vec_to_opt_str(path).ok_or(anyhow!("No file specified"))?)?,
+        Command::Benchmark => benchmark(1)?
         // _ => todo!("Command not implemented"),
     }
     // benchmark_raw_speed(1, 8, 1)?;
