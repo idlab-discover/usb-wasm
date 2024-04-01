@@ -24,7 +24,7 @@ pub fn tree(path: Option<String>) -> anyhow::Result<()> {
         let mut lines: Vec<String> = Vec::new();
         for entry in dir.iter() {
             let entry = entry.unwrap();
-            if entry.file_name().starts_with(".") {
+            if entry.file_name().starts_with('.') {
                 continue;
             }
             lines.push(format!("{}|_ {}", "  ".repeat(depth), entry.file_name()));
@@ -40,7 +40,7 @@ pub fn tree(path: Option<String>) -> anyhow::Result<()> {
     let dir = match path {
         None => root_dir,
         Some(ref path) if path == "." => root_dir,
-        Some(ref path) => root_dir.open_dir(&path)?,
+        Some(ref path) => root_dir.open_dir(path)?,
     };
 
     let lines = [vec!["\\.".to_string()], _tree(dir, 0)?].concat();
@@ -69,7 +69,7 @@ pub fn ls(dir: Option<String>) -> anyhow::Result<()> {
     let dir = match dir {
         None => root_dir,
         Some(ref path) if path == "." => root_dir,
-        Some(ref path) => root_dir.open_dir(&path)?,
+        Some(ref path) => root_dir.open_dir(path)?,
     };
     for r in dir.iter() {
         let e = r?;
@@ -112,12 +112,7 @@ fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
             let configuration = device.configurations().remove(0);
             let interface = configuration.interfaces().into_iter().find(|interface| {
                 let if_descriptor = interface.descriptor();
-                if if_descriptor.interface_class == 0x08 && if_descriptor.interface_protocol == 0x50
-                {
-                    true
-                } else {
-                    false
-                }
+                if_descriptor.interface_class == 0x08 && if_descriptor.interface_protocol == 0x50
             });
             if let Some(interface) = interface {
                 let bulk_only_transport =

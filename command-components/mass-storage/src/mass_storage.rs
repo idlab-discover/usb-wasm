@@ -179,9 +179,9 @@ impl MassStorageDevice {
         }
 
         let mut bytes: bytes::Bytes = data.into();
-        let foo = bytes.get_u8();
-        let valid = foo & 0b10000000;
-        let response_code = foo & 0b01111111;
+        let valid_and_response_code = bytes.get_u8();
+        let valid = valid_and_response_code & 0b10000000;
+        let response_code = valid_and_response_code & 0b01111111;
 
         bytes.advance(1);
 

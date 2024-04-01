@@ -93,11 +93,11 @@ impl BulkOnlyTransportDevice {
     }
 
     pub fn max_lun(&self) -> u8 {
-        return self.max_lun;
+        self.max_lun
     }
 
     pub fn selected_lun(&self) -> u8 {
-        return self.selected_lun;
+        self.selected_lun
     }
 
     pub fn select_lun(&mut self, lun: u8) -> Result<(), BulkOnlyTransportError> {
@@ -223,7 +223,7 @@ impl CommandBlockWrapper {
 
         assert!(self.lun < 16, "Invalid LUN");
         assert!(
-            self.cbwcb.len() >= 1 && self.cbwcb.len() <= 16,
+            !self.cbwcb.is_empty() && self.cbwcb.len() <= 16,
             "Invalid CBWCB length"
         );
 
