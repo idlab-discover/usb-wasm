@@ -12,6 +12,7 @@ use usb_wasm_bindings::device::UsbDevice;
 use anyhow::anyhow;
 
 pub mod bulk_only;
+pub mod lru;
 pub mod mass_storage;
 
 pub fn tree(path: Option<String>) -> anyhow::Result<()> {
@@ -350,7 +351,7 @@ pub fn benchmark(seq_test_size_mb: usize) -> anyhow::Result<()> {
         human_readable_file_size(report.sequential_write_speed as u64, 2),
         human_readable_file_size(report.sequential_read_speed as u64, 2),
     );
-
+    temp_file.flush()?;
     std::mem::drop(temp_file);
     root_dir.remove("temp.bin")?;
 

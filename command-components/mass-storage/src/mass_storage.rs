@@ -3,8 +3,11 @@ use std::io::{self, Read, Seek, Write};
 use thiserror::Error;
 use tracing::{debug, trace};
 
-use crate::bulk_only::{
-    BulkOnlyTransportCommandBlock, BulkOnlyTransportDevice, CommandStatusWrapperStatus,
+use crate::{
+    bulk_only::{
+        BulkOnlyTransportCommandBlock, BulkOnlyTransportDevice, CommandStatusWrapperStatus,
+    },
+    lru::LruCache,
 };
 
 #[derive(Debug, Error)]
@@ -23,12 +26,30 @@ pub struct MassStorageDeviceProperties {
     pub block_size: u32,
 }
 
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    data: [u8; 512],
+    dirty: bool,
+}
+
+impl CacheEntry {
+    fn new(data: [u8; 512], dirty: bool) -> Self {
+        Self { data, dirty }
+    }
+
+    fn from_vec(data: &Vec<u8>, dirty: bool) -> Self {
+        let mut entry = Self::new([0; 512], dirty);
+        entry.data.copy_from_slice(data);
+        entry
+    }
+}
+
 // Implementation of a Mass Storage USB Device using SCSI commands on top of a Bulk Only Transport USB device
 pub struct MassStorageDevice {
     device: BulkOnlyTransportDevice,
     properties: MassStorageDeviceProperties,
 
-    buffer: (u32, u32, Vec<u8>), // first block, last block (not inclusive), block data
+    cache: LruCache<u32, CacheEntry>, // Block -> Data
 
     cursor: u64,
 }
@@ -38,9 +59,7 @@ impl MassStorageDevice {
         let mut mass_storage_device = MassStorageDevice {
             device,
             properties: Default::default(),
-
-            buffer: (0, 0, Vec::new()),
-
+            cache: LruCache::new(1),
             cursor: 0,
         };
 
@@ -72,6 +91,20 @@ impl MassStorageDevice {
 
     pub fn get_properties(&self) -> MassStorageDeviceProperties {
         self.properties.clone()
+    }
+
+    pub fn flush_cache(&mut self) {
+        let mut entries_to_write = Vec::<(u32, [u8; 512])>::new();
+        self.cache.iter_mut().for_each(|(block, entry)| {
+            if entry.dirty {
+                entries_to_write.push((*block, entry.data));
+                entry.dirty = false;
+            }
+        });
+
+        for (block, data) in entries_to_write {
+            self.write_blocks(block, 1, &data);
+        }
     }
 
     // SCSI commands
@@ -237,6 +270,7 @@ impl Seek for MassStorageDevice {
 impl Read for MassStorageDevice {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         trace!("Reading {} bytes at address {:x}", buf.len(), self.cursor);
+        self.flush_cache();
 
         let start_address = self.cursor as usize;
         let end_address = (self.cursor + buf.len() as u64).min(self.properties.capacity) as usize; // Not-inclusive
@@ -271,23 +305,9 @@ impl Read for MassStorageDevice {
             "reading"
         );
 
-        // if start_block >= self.buffer.0 && end_block < self.buffer.1 {
-        //     // We can handle this request from the buffer
-        //     trace!("Servicing request from the buffer");
-        //     let offset_in_buffer = ((start_block - self.buffer.0) * self.properties.block_size)
-        //         as usize
-        //         + offset_in_start_block;
-        //     buf.copy_from_slice(&self.buffer.2[offset_in_buffer..(offset_in_buffer + num_bytes)]);
-
-        //     self.cursor += num_bytes as u64;
-
-        //     return Ok(num_bytes);
-        // }
-
         let data = self.read_blocks(start_block as _, num_blocks);
-        buf.copy_from_slice(&data[offset_in_start_block..(offset_in_start_block + num_bytes)]);
 
-        self.buffer = (start_block, end_block + 1, data);
+        buf.copy_from_slice(&data[offset_in_start_block..(offset_in_start_block + num_bytes)]);
 
         self.cursor += num_bytes as u64;
 
@@ -333,32 +353,14 @@ impl Write for MassStorageDevice {
         let data_len = data.len();
         data[0..512].copy_from_slice(&first_block);
         data[data_len - 512..data_len].copy_from_slice(&last_block);
-        // println!("Data: {:x?}", data);
-        // println!("buf: {:x?}", buf);
         data[offset_in_start_block..offset_in_start_block + buf.len()].copy_from_slice(buf);
-        // println!("Data: {:x?}", data);
 
         debug!(
             "Writing {} block(s) starting at block {}",
             num_blocks, start_block
         );
 
-        // if start_block >= self.buffer.0 && end_block < self.buffer.1 {
-        //     // We can handle this request from the buffer
-        //     trace!("Servicing request from the buffer");
-        //     let offset_in_buffer = ((start_block - self.buffer.0) * self.properties.block_size)
-        //         as usize
-        //         + offset_in_start_block;
-        //     buf.copy_from_slice(&self.buffer.2[offset_in_buffer..(offset_in_buffer + num_bytes)]);
-
-        //     self.cursor += num_bytes as u64;
-
-        //     return Ok(num_bytes);
-        // }
-
-        self.write_blocks(start_block as _, num_blocks, &data);
-
-        // self.buffer = (start_block, end_block + 1, data);
+        self.write_blocks(start_block, num_blocks, &data);
 
         self.cursor += num_bytes as u64;
 
@@ -366,6 +368,7 @@ impl Write for MassStorageDevice {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.flush_cache();
         // We don't buffer anything ourselves so we don't need to flush
         Ok(())
     }
