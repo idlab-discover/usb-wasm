@@ -1,5 +1,5 @@
 use ahash::AHashMap;
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
 pub trait HashKey: Hash + PartialEq + Eq + Clone + Debug {}
 impl<T: Hash + PartialEq + Eq + Clone + Debug> HashKey for T {}

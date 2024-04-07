@@ -23,7 +23,9 @@ enum Command {
     Cat {
         path: Vec<String>,
     },
-    Benchmark,
+    Benchmark {
+        megabytes: usize,
+    },
     RawBenchmark {
         seq_megabytes: usize,
         rnd_megabytes: usize,
@@ -39,14 +41,6 @@ fn vec_to_opt_str(vec: Vec<String>) -> Option<String> {
     }
 }
 
-fn fib(n: u32) -> u32 {
-    if n <= 2 {
-        1
-    } else {
-        fib(n - 1) + fib(n - 2)
-    }
-}
-
 pub fn main() -> anyhow::Result<()> {
     // Set up logging
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
@@ -57,7 +51,7 @@ pub fn main() -> anyhow::Result<()> {
         Command::Tree { path } => tree(vec_to_opt_str(path))?,
         Command::Ls { path } => ls(vec_to_opt_str(path))?,
         Command::Cat { path } => cat(vec_to_opt_str(path).ok_or(anyhow!("No file specified"))?)?,
-        Command::Benchmark => benchmark(100)?,
+        Command::Benchmark { megabytes } => benchmark(megabytes)?,
         Command::RawBenchmark {
             seq_megabytes,
             rnd_megabytes,

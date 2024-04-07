@@ -1,8 +1,5 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::{
-    io::{self, Read, Seek, Write},
-    ops::Range,
-};
+use std::io::{self, Read, Seek, Write};
 use thiserror::Error;
 use tracing::{debug, trace};
 

@@ -1,6 +1,5 @@
 use std::io::{self, Read, Seek, Write};
 
-use bufstream_fresh::BufStream;
 use bulk_only::BulkOnlyTransportDevice;
 
 use chrono::{DateTime, Local};
@@ -8,6 +7,7 @@ use fatfs::{Dir, FileSystem, FsOptions, ReadWriteSeek};
 use mass_storage::MassStorageDevice;
 use rand::{Fill, Rng};
 use tracing::{debug, info};
+#[cfg(target_arch = "wasm32")]
 use usb_wasm_bindings::device::UsbDevice;
 
 use anyhow::anyhow;
@@ -106,6 +106,7 @@ pub fn write(path: &str, contents: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_arch = "wasm32")]
 fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
     // Find device
     let msd = {
@@ -158,6 +159,62 @@ fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
     Ok(msd)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
+    // Find device
+
+    use rusb::UsbContext;
+    let msd = {
+        let mut mass_storage_devices: Vec<MassStorageDevice> = Vec::new();
+
+        for device in rusb::GlobalContext::default().devices()?.iter() {
+            let configuration = device.config_descriptor(0)?;
+            let interface = configuration.interfaces().into_iter().find(|interface| {
+                let if_descriptor = interface.descriptors().next().unwrap();
+                if_descriptor.class_code() == 0x08 && if_descriptor.protocol_code() == 0x50
+            });
+            if let Some(interface) = interface {
+                let bulk_only_transport =
+                    BulkOnlyTransportDevice::new(device, 0, interface.number());
+                mass_storage_devices.push(MassStorageDevice::new(bulk_only_transport).unwrap());
+            }
+        }
+
+        if mass_storage_devices.is_empty() {
+            return Err(anyhow!("No mass storage devices found. Exiting."));
+        }
+
+        if mass_storage_devices.len() == 1 {
+            mass_storage_devices.remove(0)
+        } else {
+            let mut input = String::new();
+            println!("Please select a device:");
+            for (i, msd) in mass_storage_devices.iter().enumerate() {
+                let properties = msd.get_properties();
+
+                println!(
+                    "{}. {} ({})",
+                    i,
+                    properties.name,
+                    human_readable_file_size(properties.capacity, 2)
+                );
+            }
+            io::stdin().read_line(&mut input)?;
+            let i: usize = input.trim().parse()?;
+            mass_storage_devices.remove(i)
+        }
+    };
+    {
+        let properties = msd.get_properties();
+        info!(
+            "Selected: {} ({})",
+            properties.name,
+            human_readable_file_size(properties.capacity, 2)
+        );
+    }
+    Ok(msd)
+}
+
 fn get_filesystem() -> anyhow::Result<FileSystem<impl ReadWriteSeek>> {
     let mut msd = get_mass_storage_device().unwrap();
     // let mut msd =
@@ -168,10 +225,13 @@ fn get_filesystem() -> anyhow::Result<FileSystem<impl ReadWriteSeek>> {
     let sectors = partition.sectors;
     let sector_size = mbr.sector_size;
 
+    println!("starting_lba: {}", starting_lba);
+    println!("sectors: {}", sectors);
+
     let fat_slice = fscommon::StreamSlice::new(
         msd,
         (starting_lba * sector_size).into(),
-        ((starting_lba + sectors) * sector_size).into(),
+        (starting_lba + sectors) as u64 * sector_size as u64,
     )
     .unwrap();
 
