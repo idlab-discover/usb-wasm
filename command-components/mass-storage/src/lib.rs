@@ -13,7 +13,6 @@ use usb_wasm_bindings::device::UsbDevice;
 use anyhow::anyhow;
 
 pub mod bulk_only;
-pub mod lru;
 pub mod mass_storage;
 
 pub fn tree(path: Option<String>) -> anyhow::Result<()> {
@@ -387,20 +386,18 @@ pub fn benchmark(seq_test_size_mb: usize) -> anyhow::Result<()> {
         let mut data = vec![0_u8; seq_test_size];
         data[..].try_fill(&mut rng)?;
 
-        // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
-        let start_write = std::time::Instant::now();
         temp_file.seek(io::SeekFrom::Start(0))?;
+        let start_write = std::time::Instant::now();
         temp_file.write_all(&data)?;
         let end_write = std::time::Instant::now();
         let write_time = end_write - start_write;
         report.sequential_write_speed = seq_test_size as f64 / write_time.as_secs_f64();
     }
 
-    {
-        // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
-        let start_read = std::time::Instant::now();
+    {        
         let mut data = Vec::new();
         temp_file.seek(io::SeekFrom::Start(0))?;
+        let start_read = std::time::Instant::now();
         temp_file.read_to_end(&mut data)?;
         let end_read = std::time::Instant::now();
         let read_time = end_read - start_read;

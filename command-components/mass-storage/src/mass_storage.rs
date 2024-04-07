@@ -3,12 +3,12 @@ use std::io::{self, Read, Seek, Write};
 use thiserror::Error;
 use tracing::{debug, trace};
 
-use crate::{
-    bulk_only::{
-        BulkOnlyTransportCommandBlock, BulkOnlyTransportDevice, CommandStatusWrapperStatus,
-    },
-    lru::LruCache,
+use crate::bulk_only::{
+    BulkOnlyTransportCommandBlock, BulkOnlyTransportDevice, CommandStatusWrapperStatus,
 };
+use uluru::LRUCache;
+
+const CACHE_SIZE: usize = 4;
 
 #[derive(Debug, Error)]
 pub enum MassStorageDeviceError {
@@ -28,17 +28,18 @@ pub struct MassStorageDeviceProperties {
 
 #[derive(Debug, Clone)]
 struct CacheEntry {
+    block: u32,
     data: [u8; 512],
     dirty: bool,
 }
 
 impl CacheEntry {
-    fn new(data: [u8; 512], dirty: bool) -> Self {
-        Self { data, dirty }
+    fn new(block: u32, data: [u8; 512], dirty: bool) -> Self {
+        Self { block, data, dirty }
     }
 
-    fn from_vec(data: &[u8], dirty: bool) -> Self {
-        let mut entry = Self::new([0; 512], dirty);
+    fn from_vec(block: u32, data: &[u8], dirty: bool) -> Self {
+        let mut entry = Self::new(block, [0; 512], dirty);
         entry.data.copy_from_slice(data);
         entry
     }
@@ -49,7 +50,7 @@ pub struct MassStorageDevice {
     device: BulkOnlyTransportDevice,
     properties: MassStorageDeviceProperties,
 
-    cache: LruCache<u32, CacheEntry>, // Block -> Data
+    cache: LRUCache<CacheEntry, CACHE_SIZE>, // Block -> Data
     reads: usize,
     blocks_read: usize,
     writes: usize,
@@ -63,7 +64,7 @@ impl MassStorageDevice {
         let mut mass_storage_device = MassStorageDevice {
             device,
             properties: Default::default(),
-            cache: LruCache::new(1024),
+            cache: LRUCache::default(),
             cursor: 0,
             reads: 0,
             blocks_read: 0,
@@ -103,12 +104,12 @@ impl MassStorageDevice {
 
     pub fn flush_cache(&mut self) {
         let mut entries_to_write = Vec::<(u32, [u8; 512])>::new();
-        self.cache.iter_mut().for_each(|(block, entry)| {
+        self.cache.iter().for_each(|entry| {
             if entry.dirty {
-                entries_to_write.push((*block, entry.data));
-                entry.dirty = false;
+                entries_to_write.push((entry.block, entry.data));
             }
         });
+        self.cache.clear();
 
         for (block, data) in entries_to_write {
             self.write_blocks(block, 1, &data);
@@ -311,7 +312,7 @@ impl Read for MassStorageDevice {
         let mut ranges: Vec<(u32, u32)> = Vec::new();
 
         for block in start_block..end_block + 1 {
-            if let Some(data) = self.cache.get(&block) {
+            if let Some(data) = self.cache.find(|item| item.block == block) {
                 // Found in cache
                 if block == start_block && block == end_block {
                     buf[..].copy_from_slice(&data.data[offset_in_start_block..offset_in_end_block]);
@@ -358,18 +359,23 @@ impl Read for MassStorageDevice {
         for (start, end) in ranges {
             let data = self.read_blocks(start_block as _, (end - start) as _);
             // Put the data into the cache
-            let range = if data.len() > 512 * self.cache.capacity() {
-                data.len() - (512 * self.cache.capacity())..data.len()
+            let range = if data.len() > 512 * CACHE_SIZE {
+                data.len() - (512 * CACHE_SIZE)..data.len()
             } else {
                 0..data.len()
             };
             for (i, chunk) in data[range].chunks(512).enumerate() {
-                let key = start + i as u32;
-                let value = CacheEntry::from_vec(&chunk, false);
-                if let Some((lba, evicted_entry)) = self.cache.set(key, value) {
-                    if evicted_entry.dirty {
-                        println!("Flushing block {}", lba);
-                        self.write_blocks(lba, 1, &evicted_entry.data);
+                let block = start + i as u32;
+
+                if let Some(item) = self.cache.find(|item| item.block == block) {
+                    item.data.copy_from_slice(&chunk);
+                } else {
+                    let value = CacheEntry::from_vec(block, &chunk, false);
+                    if let Some(evicted_entry) = self.cache.insert(value) {
+                        if evicted_entry.dirty {
+                            println!("Flushing block {}", block);
+                            self.write_blocks(block, 1, &evicted_entry.data);
+                        }
                     }
                 }
             }
@@ -439,7 +445,7 @@ impl Write for MassStorageDevice {
 
         if num_blocks == 1 {
             let mut data = vec![0_u8; 512];
-            if let Some(block) = self.cache.get(&start_block) {
+            if let Some(block) = self.cache.find(|item| item.block == start_block) {
                 data.copy_from_slice(&block.data);
             } else {
                 let original_data = self.read_blocks(start_block, 1);
@@ -447,20 +453,22 @@ impl Write for MassStorageDevice {
             }
             data[offset_in_start_block..offset_in_start_block + buf.len()].copy_from_slice(buf);
             // Update the cache
-            if let Some((lba, evicted_block)) = self
-                .cache
-                .set(start_block, CacheEntry::from_vec(&data, true))
-            {
-                if evicted_block.dirty {
-                    println!("Flushing block {}", lba);
-                    self.write_blocks(lba, 1, &evicted_block.data);
+            if let Some(item) = self.cache.find(|item| item.block == start_block) {
+                item.data.copy_from_slice(&data);
+            } else {
+                let value = CacheEntry::from_vec(start_block, &data, false);
+                if let Some(evicted_entry) = self.cache.insert(value) {
+                    if evicted_entry.dirty {
+                        println!("Flushing block {}", start_block);
+                        self.write_blocks(start_block, 1, &evicted_entry.data);
+                    }
                 }
             }
         } else {
             let mut data = vec![0_u8; num_blocks as usize * 512];
             let data_len = data.len();
             // First block
-            if let Some(block) = self.cache.get(&start_block) {
+            if let Some(block) = self.cache.find(|item| item.block == start_block) {
                 data[0..512].copy_from_slice(&block.data);
             } else {
                 let original_data = self.read_blocks(start_block, 1);
@@ -468,7 +476,7 @@ impl Write for MassStorageDevice {
             }
 
             // Last block
-            if let Some(block) = self.cache.get(&end_block) {
+            if let Some(block) = self.cache.find(|item| item.block == end_block) {
                 data[data_len - 512..data_len].copy_from_slice(&block.data);
             } else {
                 let original_data = self.read_blocks(end_block, 1);
@@ -481,12 +489,19 @@ impl Write for MassStorageDevice {
             // Update the cache
             for i in 0..num_blocks {
                 let key = start_block + i as u32;
-                let value = CacheEntry::from_vec(
-                    &data[(i as usize * 512)..((i as usize + 1) * 512)],
-                    false,
-                );
                 // If the evicted block was dirty, we don't need to write it back because we already wrote it back just above
-                self.cache.set(key, value);
+                if let Some(item) = self.cache.find(|item| item.block == key) {
+                    item.data.copy_from_slice(&data);
+                } else {
+                    let value =
+                        CacheEntry::from_vec(key, &data[i as usize * 512..(i + 1) as usize * 512], false);
+                    if let Some(evicted_entry) = self.cache.insert(value) {
+                        if evicted_entry.dirty {
+                            println!("Flushing block {}", key);
+                            self.write_blocks(key, 1, &evicted_entry.data);
+                        }
+                    }
+                }
             }
         }
 
