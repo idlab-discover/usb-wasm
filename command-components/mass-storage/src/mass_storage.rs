@@ -8,7 +8,7 @@ use crate::bulk_only::{
 };
 use uluru::LRUCache;
 
-const CACHE_SIZE: usize = 4;
+const CACHE_SIZE: usize = 128;
 
 #[derive(Debug, Error)]
 pub enum MassStorageDeviceError {
@@ -109,11 +109,12 @@ impl MassStorageDevice {
                 entries_to_write.push((entry.block, entry.data));
             }
         });
-        self.cache.clear();
 
         for (block, data) in entries_to_write {
             self.write_blocks(block, 1, &data);
         }
+
+        self.cache.clear();
     }
 
     // SCSI commands
@@ -312,22 +313,22 @@ impl Read for MassStorageDevice {
         let mut ranges: Vec<(u32, u32)> = Vec::new();
 
         for block in start_block..end_block + 1 {
-            if let Some(data) = self.cache.find(|item| item.block == block) {
+            if let Some(entry) = self.cache.find(|item| item.block == block) {
                 // Found in cache
                 if block == start_block && block == end_block {
-                    buf[..].copy_from_slice(&data.data[offset_in_start_block..offset_in_end_block]);
+                    buf[..].copy_from_slice(&entry.data[offset_in_start_block..offset_in_end_block]);
                 } else if block == start_block {
                     buf[..512 - offset_in_start_block]
-                        .copy_from_slice(&data.data[offset_in_start_block..]);
+                        .copy_from_slice(&entry.data[offset_in_start_block..]);
                 } else if block == end_block {
                     buf[(512 - offset_in_start_block) + (num_blocks as usize - 2) * 512..]
-                        .copy_from_slice(&data.data[..offset_in_end_block]);
+                        .copy_from_slice(&entry.data[..offset_in_end_block]);
                 } else {
                     buf[(512 - offset_in_start_block) + ((start_block - block) as usize) * 512
                         ..(512 - offset_in_start_block)
                             + ((start_block - block) as usize) * 512
                             + 512]
-                        .copy_from_slice(&data.data);
+                        .copy_from_slice(&entry.data);
                 }
 
                 if let Some(new_range) = new_range {
@@ -455,11 +456,11 @@ impl Write for MassStorageDevice {
             // Update the cache
             if let Some(item) = self.cache.find(|item| item.block == start_block) {
                 item.data.copy_from_slice(&data);
+                item.dirty = true;
             } else {
                 let value = CacheEntry::from_vec(start_block, &data, false);
                 if let Some(evicted_entry) = self.cache.insert(value) {
                     if evicted_entry.dirty {
-                        println!("Flushing block {}", start_block);
                         self.write_blocks(start_block, 1, &evicted_entry.data);
                     }
                 }
@@ -497,7 +498,6 @@ impl Write for MassStorageDevice {
                         CacheEntry::from_vec(key, &data[i as usize * 512..(i + 1) as usize * 512], false);
                     if let Some(evicted_entry) = self.cache.insert(value) {
                         if evicted_entry.dirty {
-                            println!("Flushing block {}", key);
                             self.write_blocks(key, 1, &evicted_entry.data);
                         }
                     }
