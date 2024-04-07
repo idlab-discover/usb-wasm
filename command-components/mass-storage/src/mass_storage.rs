@@ -1,5 +1,8 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::io::{self, Read, Seek, Write};
+use std::{
+    io::{self, Read, Seek, Write},
+    ops::Range,
+};
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -37,7 +40,7 @@ impl CacheEntry {
         Self { data, dirty }
     }
 
-    fn from_vec(data: &Vec<u8>, dirty: bool) -> Self {
+    fn from_vec(data: &[u8], dirty: bool) -> Self {
         let mut entry = Self::new([0; 512], dirty);
         entry.data.copy_from_slice(data);
         entry
@@ -50,6 +53,10 @@ pub struct MassStorageDevice {
     properties: MassStorageDeviceProperties,
 
     cache: LruCache<u32, CacheEntry>, // Block -> Data
+    reads: usize,
+    blocks_read: usize,
+    writes: usize,
+    blocks_written: usize,
 
     cursor: u64,
 }
@@ -59,8 +66,12 @@ impl MassStorageDevice {
         let mut mass_storage_device = MassStorageDevice {
             device,
             properties: Default::default(),
-            cache: LruCache::new(1),
+            cache: LruCache::new(1024),
             cursor: 0,
+            reads: 0,
+            blocks_read: 0,
+            writes: 0,
+            blocks_written: 0,
         };
 
         // Inquiry properties
@@ -149,6 +160,9 @@ impl MassStorageDevice {
     }
 
     pub fn read_blocks(&mut self, address: u32, blocks: u16) -> Vec<u8> {
+        self.blocks_read += blocks as usize;
+        self.reads += 1;
+        // println!("Reading {} block(s) starting at block {}", blocks, address);
         let mut command_block = BytesMut::new();
         command_block.put_u8(0x28); // OPCODE
         command_block.put_u8(0); // Fields I don't care about
@@ -172,6 +186,9 @@ impl MassStorageDevice {
     }
 
     pub fn write_blocks(&mut self, address: u32, blocks: u16, data: &[u8]) {
+        self.blocks_written += blocks as usize;
+        self.writes += 1;
+        // println!("Writing {} blocks at address {:x}", blocks, address);
         let mut command_block = BytesMut::new();
         command_block.put_u8(0x2A); // OPCODE
         command_block.put_u8(0); // Fields I don't care about
@@ -270,7 +287,6 @@ impl Seek for MassStorageDevice {
 impl Read for MassStorageDevice {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         trace!("Reading {} bytes at address {:x}", buf.len(), self.cursor);
-        self.flush_cache();
 
         let start_address = self.cursor as usize;
         let end_address = (self.cursor + buf.len() as u64).min(self.properties.capacity) as usize; // Not-inclusive
@@ -285,13 +301,50 @@ impl Read for MassStorageDevice {
         let start_block = (start_address / self.properties.block_size as usize) as u32;
         let offset_in_start_block = start_address % self.properties.block_size as usize;
         let end_block = ((end_address - 1) / self.properties.block_size as usize) as u32; // Because end_address is not inclusive
-        let num_blocks = (end_block - start_block + 1) as _;
+        let num_blocks = (end_block - start_block + 1) as usize;
+        let offset_in_end_block = ((end_address - 1) % self.properties.block_size as usize) + 1;
 
         trace!(
             "Reading {} block(s) starting at block {}",
             num_blocks,
             start_block
         );
+
+        let mut new_range: Option<u32> = None;
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+
+        for block in start_block..end_block + 1 {
+            if let Some(data) = self.cache.get(&block) {
+                // Found in cache
+                if block == start_block && block == end_block {
+                    buf[..].copy_from_slice(&data.data[offset_in_start_block..offset_in_end_block]);
+                } else if block == start_block {
+                    buf[..512 - offset_in_start_block]
+                        .copy_from_slice(&data.data[offset_in_start_block..]);
+                } else if block == end_block {
+                    buf[(512 - offset_in_start_block) + (num_blocks as usize - 2) * 512..]
+                        .copy_from_slice(&data.data[..offset_in_end_block]);
+                } else {
+                    buf[(512 - offset_in_start_block) + ((start_block - block) as usize) * 512
+                        ..(512 - offset_in_start_block)
+                            + ((start_block - block) as usize) * 512
+                            + 512]
+                        .copy_from_slice(&data.data);
+                }
+
+                if let Some(new_range) = new_range {
+                    ranges.push((new_range, block));
+                }
+            } else {
+                if new_range.is_none() {
+                    // We're at the start of the range
+                    new_range = Some(block);
+                }
+            }
+        }
+        if let Some(new_range) = new_range {
+            ranges.push((new_range, end_block + 1));
+        }
 
         tracing::trace!(
             start_address,
@@ -305,9 +358,45 @@ impl Read for MassStorageDevice {
             "reading"
         );
 
-        let data = self.read_blocks(start_block as _, num_blocks);
-
-        buf.copy_from_slice(&data[offset_in_start_block..(offset_in_start_block + num_bytes)]);
+        for (start, end) in ranges {
+            let data = self.read_blocks(start_block as _, (end - start) as _);
+            // Put the data into the cache
+            let range = if data.len() > 512 * self.cache.capacity() {
+                data.len() - (512 * self.cache.capacity())..data.len()
+            } else {
+                0..data.len()
+            };
+            for (i, chunk) in data[range].chunks(512).enumerate() {
+                let key = start + i as u32;
+                let value = CacheEntry::from_vec(&chunk, false);
+                if let Some((lba, evicted_entry)) = self.cache.set(key, value) {
+                    if evicted_entry.dirty {
+                        println!("Flushing block {}", lba);
+                        self.write_blocks(lba, 1, &evicted_entry.data);
+                    }
+                }
+            }
+            // Copy the data into the buffer
+            if start == start_block && end == end_block + 1 {
+                buf[..].copy_from_slice(
+                    &data[offset_in_start_block
+                        ..(num_blocks as usize - 1) * 512 + offset_in_end_block],
+                );
+            } else if start == start_block {
+                buf[..(512 - offset_in_start_block) + ((end - start_block - 1) as usize) * 512]
+                    .copy_from_slice(&data[offset_in_start_block..(num_blocks as usize - 1) * 512]);
+            } else if end == end_block + 1 {
+                buf[(512 - offset_in_start_block) + ((start - start_block - 1) as usize) * 512..]
+                    .copy_from_slice(
+                        &data[..(num_blocks as usize - 1) * 512 + offset_in_end_block],
+                    );
+            } else {
+                // General case
+                buf[(512 - offset_in_start_block) + ((start - start_block - 1) as usize) * 512
+                    ..(512 - offset_in_start_block) + ((end - start_block - 1) as usize) * 512]
+                    .copy_from_slice(&data[..]);
+            }
+        }
 
         self.cursor += num_bytes as u64;
 
@@ -317,7 +406,7 @@ impl Read for MassStorageDevice {
 
 impl Write for MassStorageDevice {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        debug!("Writing {} bytes at address {:x}", buf.len(), self.cursor);
+        // println!("Writing {} bytes at address {:x}", buf.len(), self.cursor);
 
         let start_address = self.cursor as usize;
         let end_address = (self.cursor + buf.len() as u64).min(self.properties.capacity) as usize; // Not-inclusive
@@ -334,9 +423,6 @@ impl Write for MassStorageDevice {
         let end_block = ((end_address - 1) / self.properties.block_size as usize) as u32; // Because end_address is not inclusive
         let num_blocks: u16 = (end_block - start_block + 1) as _;
 
-        let first_block = self.read_blocks(start_block, 1);
-        let last_block = self.read_blocks(end_block, 1);
-
         tracing::trace!(
             start_address,
             end_address,
@@ -349,18 +435,63 @@ impl Write for MassStorageDevice {
             "writing"
         );
 
-        let mut data = vec![0_u8; num_blocks as usize * 512];
-        let data_len = data.len();
-        data[0..512].copy_from_slice(&first_block);
-        data[data_len - 512..data_len].copy_from_slice(&last_block);
-        data[offset_in_start_block..offset_in_start_block + buf.len()].copy_from_slice(buf);
-
         debug!(
             "Writing {} block(s) starting at block {}",
             num_blocks, start_block
         );
 
-        self.write_blocks(start_block, num_blocks, &data);
+        if num_blocks == 1 {
+            let mut data = vec![0_u8; 512];
+            if let Some(block) = self.cache.get(&start_block) {
+                data.copy_from_slice(&block.data);
+            } else {
+                let original_data = self.read_blocks(start_block, 1);
+                data.copy_from_slice(&original_data);
+            }
+            data[offset_in_start_block..offset_in_start_block + buf.len()].copy_from_slice(buf);
+            // Update the cache
+            if let Some((lba, evicted_block)) = self
+                .cache
+                .set(start_block, CacheEntry::from_vec(&data, true))
+            {
+                if evicted_block.dirty {
+                    println!("Flushing block {}", lba);
+                    self.write_blocks(lba, 1, &evicted_block.data);
+                }
+            }
+        } else {
+            let mut data = vec![0_u8; num_blocks as usize * 512];
+            let data_len = data.len();
+            // First block
+            if let Some(block) = self.cache.get(&start_block) {
+                data[0..512].copy_from_slice(&block.data);
+            } else {
+                let original_data = self.read_blocks(start_block, 1);
+                data[0..512].copy_from_slice(&original_data);
+            }
+
+            // Last block
+            if let Some(block) = self.cache.get(&end_block) {
+                data[data_len - 512..data_len].copy_from_slice(&block.data);
+            } else {
+                let original_data = self.read_blocks(end_block, 1);
+                data[data_len - 512..data_len].copy_from_slice(&original_data);
+            }
+            data[offset_in_start_block..offset_in_start_block + buf.len()].copy_from_slice(buf);
+
+            self.write_blocks(start_block, num_blocks, &data);
+
+            // Update the cache
+            for i in 0..num_blocks {
+                let key = start_block + i as u32;
+                let value = CacheEntry::from_vec(
+                    &data[(i as usize * 512)..((i as usize + 1) * 512)],
+                    false,
+                );
+                // If the evicted block was dirty, we don't need to write it back because we already wrote it back just above
+                self.cache.set(key, value);
+            }
+        }
 
         self.cursor += num_bytes as u64;
 
@@ -373,6 +504,17 @@ impl Write for MassStorageDevice {
         Ok(())
     }
 }
+
+impl Drop for MassStorageDevice {
+    fn drop(&mut self) {
+        self.flush_cache();
+        println!("Read Ops: {}", self.reads);
+        println!("Read {} blocks", self.blocks_read);
+        println!("Write Ops: {}", self.writes);
+        println!("Wrote {} blocks", self.blocks_written);
+    }
+}
+
 #[derive(Debug)]
 pub struct InquiryResponse {
     pub peripheral_qualifier: u8,

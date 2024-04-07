@@ -11,8 +11,10 @@ edition = "2021"
 name = "mass-storage"
 
 [dependencies]
+ahash = "0.8.11"
 anyhow = { workspace = true }
 bufstream = "0.1.4"
+bufstream-fresh = "0.3.1"
 bytes = "1.5.0"
 chrono = "0.4.37"
 clap = { version = "4.5.4", features = ["derive"] }

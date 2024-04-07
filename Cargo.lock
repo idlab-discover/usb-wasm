@@ -24,6 +24,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e89da841a80418a9b391ebaea17f5c112ffaaa96f621d2c285b5174da76b9011"
 dependencies = [
  "cfg-if",
+ "getrandom",
  "once_cell",
  "version_check",
  "zerocopy",
@@ -204,6 +205,12 @@ name = "bufstream"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40e38929add23cdf8a366df9b0e088953150724bcbe5fc330b0d8eb3b328eec8"
+
+[[package]]
+name = "bufstream-fresh"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c431e5d450eceb6f5096c371f502946ae1cc65407935bc2cae8f1d625a2035f"
 
 [[package]]
 name = "bumpalo"
@@ -1132,8 +1139,10 @@ dependencies = [
 name = "mass-storage"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "anyhow",
  "bufstream",
+ "bufstream-fresh",
  "bytes",
  "chrono",
  "clap",

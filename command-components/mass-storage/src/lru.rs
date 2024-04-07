@@ -1,3 +1,4 @@
+use ahash::AHashMap;
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 pub trait HashKey: Hash + PartialEq + Eq + Clone + Debug {}
@@ -10,7 +11,7 @@ struct LruEntry<V> {
 
 pub struct LruCache<K: HashKey, V: Debug> {
     capacity: usize,
-    cache: HashMap<K, LruEntry<V>>,
+    cache: AHashMap<K, LruEntry<V>>,
     age: usize,
 }
 
@@ -28,15 +29,22 @@ impl<K: HashKey, V: Debug> LruCache<K, V> {
             .unwrap()
             .clone();
         let entry = self.cache.remove_entry(&key).unwrap();
+
+        // println!("Ejecting {:?}", key);
+
         Some((entry.0, entry.1.value))
     }
 
     pub fn new(capacity: usize) -> Self {
         LruCache {
             capacity,
-            cache: HashMap::with_capacity(capacity),
+            cache: AHashMap::with_capacity(capacity),
             age: 0,
         }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     pub fn get(&mut self, key: &K) -> Option<&V> {
@@ -76,7 +84,7 @@ impl<K: HashKey, V: Debug> LruCache<K, V> {
         }
 
         let evicted_entry = if self.len() >= self.capacity {
-            println!("Cache: evicting");
+            // println!("Cache: evicting");
             self.remove_lru_entry()
         } else {
             None

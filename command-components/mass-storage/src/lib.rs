@@ -1,5 +1,6 @@
 use std::io::{self, Read, Seek, Write};
 
+use bufstream_fresh::BufStream;
 use bulk_only::BulkOnlyTransportDevice;
 
 use chrono::{DateTime, Local};
@@ -159,6 +160,8 @@ fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
 
 fn get_filesystem() -> anyhow::Result<FileSystem<impl ReadWriteSeek>> {
     let mut msd = get_mass_storage_device().unwrap();
+    // let mut msd =
+    //     BufStream::with_capacities(24576, 24576, get_mass_storage_device().unwrap());
     let mbr = mbrman::MBR::read_from(&mut msd, 512)?;
     let (_, partition) = mbr.iter().next().ok_or(anyhow!("No partition found"))?;
     let starting_lba = partition.starting_lba;
@@ -178,7 +181,7 @@ fn get_filesystem() -> anyhow::Result<FileSystem<impl ReadWriteSeek>> {
 
 // WARNING: This will probably break your filesystem, as this function just writes random blocks to the device
 // Breaks the USB when test_count > 1 for some reason?
-fn _benchmark_raw_speed(
+pub fn benchmark_raw_speed(
     test_count: usize,
     seq_test_size_mb: usize,
     rnd_test_size_mb: usize,
@@ -219,7 +222,7 @@ fn _benchmark_raw_speed(
         let mut data = vec![0_u8; NUM_BLOCKS as usize * 512];
         data[..].try_fill(&mut rng)?;
 
-        let address = 0;
+        let address = 8192;
         // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
         let start_write = std::time::Instant::now();
         for i in 0..seq_num_repetitions {
@@ -232,7 +235,7 @@ fn _benchmark_raw_speed(
     report.sequential_write_speed /= test_count as f64;
 
     for _ in 0..test_count {
-        let address = 0;
+        let address = 8192;
         // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
         let start_read = std::time::Instant::now();
         for i in 0..seq_num_repetitions {
@@ -251,7 +254,7 @@ fn _benchmark_raw_speed(
         data[..].try_fill(&mut rng)?;
 
         let addresses: Vec<u32> = (0..rnd_num_repetitions)
-            .map(|_| rng.gen_range(0..properties.total_number_of_blocks - NUM_BLOCKS))
+            .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
             .collect();
         let start_write = std::time::Instant::now();
         for address in addresses {
@@ -265,7 +268,7 @@ fn _benchmark_raw_speed(
 
     for _ in 0..test_count {
         let addresses: Vec<u32> = (0..rnd_num_repetitions)
-            .map(|_| rng.gen_range(0..properties.total_number_of_blocks - NUM_BLOCKS))
+            .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
             .collect();
         let start_read = std::time::Instant::now();
         for address in addresses {
@@ -278,9 +281,7 @@ fn _benchmark_raw_speed(
     report.random_read_speed /= test_count as f64;
 
     info!(
-        "Blocks: {} ({}): SEQ WRITE: {}/s, SEQ READ: {}/s, RND WRITE: {}/s, RND READ: {}/s",
-        NUM_BLOCKS,
-        human_readable_file_size(NUM_BLOCKS as u64 * 512, 2),
+        "SEQ WRITE: {}/s, SEQ READ: {}/s, RND WRITE: {}/s, RND READ: {}/s",
         human_readable_file_size(report.sequential_write_speed as u64, 2),
         human_readable_file_size(report.sequential_read_speed as u64, 2),
         human_readable_file_size(report.random_write_speed as u64, 2),
@@ -313,7 +314,7 @@ pub fn benchmark(seq_test_size_mb: usize) -> anyhow::Result<()> {
     println!("Starting benchmark");
     println!(
         "Seq Test Data: {}",
-        human_readable_file_size(seq_test_size_mb as u64 * 1024 * 1024, 2),
+        human_readable_file_size(seq_test_size as u64, 2),
     );
 
     let mut report = Report {

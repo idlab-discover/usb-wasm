@@ -20,7 +20,12 @@ mass-storage *arg:
 
 flamegraph-mass-storage:
     just build-mass-storage
-    cargo flamegraph --no-inline --bin wasmtime-usb -- ./out/mass-storage.wasm
+    cargo flamegraph --no-inline --bin wasmtime-usb -- ./out/mass-storage.wasm benchmark
+
+perf-mass-storage:
+    just build-mass-storage
+    cargo build --release
+    perf record --call-graph dwarf -k mono ./target/release/wasmtime-usb ./out/mass-storage.wasm benchmark
 
 build-lsusb:
     just regenerate-bindings

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use mass_storage::{benchmark, cat, ls, tree};
+use mass_storage::{benchmark, benchmark_raw_speed, cat, ls, tree};
 use tracing::Level;
 
 use anyhow::anyhow;
@@ -14,10 +14,20 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Tree { path: Vec<String> },
-    Ls { path: Vec<String> },
-    Cat { path: Vec<String> },
+    Tree {
+        path: Vec<String>,
+    },
+    Ls {
+        path: Vec<String>,
+    },
+    Cat {
+        path: Vec<String>,
+    },
     Benchmark,
+    RawBenchmark {
+        seq_megabytes: usize,
+        rnd_megabytes: usize,
+    },
     // TODO: Copy
 }
 
@@ -26,6 +36,14 @@ fn vec_to_opt_str(vec: Vec<String>) -> Option<String> {
         None
     } else {
         Some(vec.join(" "))
+    }
+}
+
+fn fib(n: u32) -> u32 {
+    if n <= 2 {
+        1
+    } else {
+        fib(n - 1) + fib(n - 2)
     }
 }
 
@@ -39,15 +57,12 @@ pub fn main() -> anyhow::Result<()> {
         Command::Tree { path } => tree(vec_to_opt_str(path))?,
         Command::Ls { path } => ls(vec_to_opt_str(path))?,
         Command::Cat { path } => cat(vec_to_opt_str(path).ok_or(anyhow!("No file specified"))?)?,
-        Command::Benchmark => benchmark(1)?
-        // _ => todo!("Command not implemented"),
+        Command::Benchmark => benchmark(100)?,
+        Command::RawBenchmark {
+            seq_megabytes,
+            rnd_megabytes,
+        } => benchmark_raw_speed(1, seq_megabytes, rnd_megabytes)?,
     }
-    // benchmark_raw_speed(1, 8, 1)?;
-
-    // ls(Some("System Volume Information".into()))?;
-    // cat(fat_slice)?;
-    // write(fat_slice, "hello.txt", b"Hello USB!\n")?;
-    // write(fat_slice, "hello2.txt", b"Hello USB2!\n")?;
 
     Ok(())
 }
