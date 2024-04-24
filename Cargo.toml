@@ -25,6 +25,7 @@ members = [
     "command-components/ping",
     "command-components/xbox",
     "command-components/mass-storage",
+    "command-components/enumerate-devices-rust",
     "usb-wasm",
     "usb-wasm-bindings",
 ]
@@ -44,3 +45,4 @@ debug = true
 [profile.dev.package."*"]
 debug = false
 opt-level = 3
+

@@ -675,6 +675,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "enumerate-devices-rust"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "usb-wasm-bindings",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
