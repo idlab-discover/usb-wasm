@@ -168,7 +168,7 @@ fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
 
         for device in rusb::GlobalContext::default().devices()?.iter() {
             let configuration = device.config_descriptor(0)?;
-            let interface = configuration.interfaces().into_iter().find(|interface| {
+            let interface = configuration.interfaces().find(|interface| {
                 let if_descriptor = interface.descriptors().next().unwrap();
                 if_descriptor.class_code() == 0x08 && if_descriptor.protocol_code() == 0x50
             });

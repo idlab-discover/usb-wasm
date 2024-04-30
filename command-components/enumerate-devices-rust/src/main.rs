@@ -1,6 +1,5 @@
 use usb_wasm_bindings::{
-    device::{UsbConfiguration, UsbDevice, UsbEndpoint, UsbInterface},
-    types::{Direction, TransferType},
+    device::{UsbDevice},
 };
 
 pub fn main() -> anyhow::Result<()> {

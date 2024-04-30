@@ -321,7 +321,7 @@ impl Read for MassStorageDevice {
                     buf[..512 - offset_in_start_block]
                         .copy_from_slice(&entry.data[offset_in_start_block..]);
                 } else if block == end_block {
-                    buf[(512 - offset_in_start_block) + (num_blocks as usize - 2) * 512..]
+                    buf[(512 - offset_in_start_block) + (num_blocks - 2) * 512..]
                         .copy_from_slice(&entry.data[..offset_in_end_block]);
                 } else {
                     buf[(512 - offset_in_start_block) + ((start_block - block) as usize) * 512
@@ -334,11 +334,9 @@ impl Read for MassStorageDevice {
                 if let Some(new_range) = new_range {
                     ranges.push((new_range, block));
                 }
-            } else {
-                if new_range.is_none() {
-                    // We're at the start of the range
-                    new_range = Some(block);
-                }
+            } else if new_range.is_none() {
+                // We're at the start of the range
+                new_range = Some(block);
             }
         }
         if let Some(new_range) = new_range {
@@ -369,9 +367,9 @@ impl Read for MassStorageDevice {
                 let block = start + i as u32;
 
                 if let Some(item) = self.cache.find(|item| item.block == block) {
-                    item.data.copy_from_slice(&chunk);
+                    item.data.copy_from_slice(chunk);
                 } else {
-                    let value = CacheEntry::from_vec(block, &chunk, false);
+                    let value = CacheEntry::from_vec(block, chunk, false);
                     if let Some(evicted_entry) = self.cache.insert(value) {
                         if evicted_entry.dirty {
                             println!("Flushing block {}", block);
@@ -384,15 +382,15 @@ impl Read for MassStorageDevice {
             if start == start_block && end == end_block + 1 {
                 buf[..].copy_from_slice(
                     &data[offset_in_start_block
-                        ..(num_blocks as usize - 1) * 512 + offset_in_end_block],
+                        ..(num_blocks - 1) * 512 + offset_in_end_block],
                 );
             } else if start == start_block {
                 buf[..(512 - offset_in_start_block) + ((end - start_block - 1) as usize) * 512]
-                    .copy_from_slice(&data[offset_in_start_block..(num_blocks as usize - 1) * 512]);
+                    .copy_from_slice(&data[offset_in_start_block..(num_blocks - 1) * 512]);
             } else if end == end_block + 1 {
                 buf[(512 - offset_in_start_block) + ((start - start_block - 1) as usize) * 512..]
                     .copy_from_slice(
-                        &data[..(num_blocks as usize - 1) * 512 + offset_in_end_block],
+                        &data[..(num_blocks - 1) * 512 + offset_in_end_block],
                     );
             } else {
                 // General case
