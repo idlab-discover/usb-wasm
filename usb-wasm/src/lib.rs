@@ -29,7 +29,7 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 pub struct UsbDevice {
     device: rusb::Device<rusb::GlobalContext>,
     handle: Option<rusb::DeviceHandle<GlobalContext>>,
-    language: rusb::Language,
+    language: Option<rusb::Language>,
     descriptor: usb::device::DeviceDescriptor,
 }
 
@@ -72,22 +72,37 @@ impl UsbDevice {
 
         let mut devices_ = Vec::with_capacity(devices.len());
 
-        for device in devices.iter() {
+        // Poor man's try_block
+        fn read_device(
+            device: rusb::Device<rusb::GlobalContext>,
+        ) -> Result<UsbDevice, UsbWasmError> {
             let handle = device.open()?;
 
             // First get all the information needed to apply the filters
             let descriptor = device.device_descriptor()?;
-            let language = handle.read_languages(TIMEOUT)?[0];
 
-            let product_name = handle
-                .read_product_string(language, &descriptor, TIMEOUT)
-                .ok();
-            let manufacturer_name = handle
-                .read_manufacturer_string(language, &descriptor, TIMEOUT)
-                .ok();
-            let serial_number = handle
-                .read_serial_number_string(language, &descriptor, TIMEOUT)
-                .ok();
+            let (language, product_name, manufacturer_name, serial_number) =
+                if let Ok(languages) = handle.read_languages(TIMEOUT) {
+                    let language = languages[0];
+
+                    let product_name = handle
+                        .read_product_string(language, &descriptor, TIMEOUT)
+                        .ok();
+                    let manufacturer_name = handle
+                        .read_manufacturer_string(language, &descriptor, TIMEOUT)
+                        .ok();
+                    let serial_number = handle
+                        .read_serial_number_string(language, &descriptor, TIMEOUT)
+                        .ok();
+                    (
+                        Some(language),
+                        product_name,
+                        manufacturer_name,
+                        serial_number,
+                    )
+                } else {
+                    (None, None, None, None)
+                };
 
             let device_version = descriptor.device_version();
             let usb_version = descriptor.usb_version();
@@ -114,12 +129,19 @@ impl UsbDevice {
                 max_packet_size: descriptor.max_packet_size(),
             };
 
-            devices_.push(UsbDevice {
+            Ok(UsbDevice {
                 device,
                 handle: None,
                 language,
                 descriptor,
-            });
+            })
+        }
+
+        for device in devices.iter() {
+            match read_device(device) {
+                Ok(device) => devices_.push(device),
+                Err(e) => eprintln!("Error while reading a device: {:?}", e),
+            }
         }
 
         Ok(devices_)
@@ -128,7 +150,7 @@ impl UsbDevice {
     pub fn open(&mut self) -> Result<(), UsbWasmError> {
         let mut handle = self.device.open()?;
         handle.set_auto_detach_kernel_driver(true)?;
-        
+
         self.handle = Some(handle);
 
         Ok(())
@@ -136,12 +158,13 @@ impl UsbDevice {
 
     pub fn active_configuration(&mut self) -> Result<UsbConfiguration, UsbWasmError> {
         let configuration = self.device.active_config_descriptor()?;
-        let description = self
-            .device
-            .open()
-            .unwrap()
-            .read_configuration_string(self.language, &configuration, TIMEOUT)
-            .ok();
+        let description = self.language.and_then(|language| {
+            self.device
+                .open()
+                .unwrap()
+                .read_configuration_string(language, &configuration, TIMEOUT)
+                .ok()
+        });
 
         // Find the index of this configuration
         let config_index = (0..self.device.device_descriptor()?.num_configurations())
@@ -505,12 +528,13 @@ impl UsbDevice {
         {
             let configuration = self.device.config_descriptor(i).unwrap();
 
-            let description = self
-                .device
-                .open()
-                .unwrap()
-                .read_configuration_string(self.language, &configuration, TIMEOUT)
-                .ok();
+            let description = self.language.and_then(|language| {
+                self.device
+                    .open()
+                    .unwrap()
+                    .read_configuration_string(language, &configuration, TIMEOUT)
+                    .ok()
+            });
             configurations.push(UsbConfiguration {
                 language: self.language,
                 index: i,
@@ -532,7 +556,7 @@ impl UsbDevice {
 pub struct UsbConfiguration {
     device: rusb::Device<rusb::GlobalContext>,
     index: u8,
-    language: rusb::Language,
+    language: Option<rusb::Language>,
     descriptor: usb::device::ConfigurationDescriptor,
 }
 
@@ -544,9 +568,11 @@ impl UsbConfiguration {
             .interfaces()
             .flat_map(|interface| {
                 interface.descriptors().map(|interface_descriptor| {
-                    let interface_name = handle
-                        .read_interface_string(self.language, &interface_descriptor, TIMEOUT)
-                        .ok();
+                    let interface_name = self.language.and_then(|language| {
+                        handle
+                            .read_interface_string(language, &interface_descriptor, TIMEOUT)
+                            .ok()
+                    });
 
                     UsbInterface {
                         config_descriptor: config_descriptor.clone(),
