@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use tracing_subscriber::EnvFilter;
+use usb_wasm::error::UsbWasmError;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_usb_cli::HostState;
@@ -7,8 +8,10 @@ use wasmtime_wasi::{I32Exit, WasiView};
 
 fn main() -> anyhow::Result<()> {
     // Set up logging
-    tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
-    
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     // TODO create a proper CLI here
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -50,6 +53,17 @@ fn main() -> anyhow::Result<()> {
             if let Some(source) = e.source() {
                 if let Some(exit_code) = source.downcast_ref::<I32Exit>() {
                     std::process::exit(exit_code.process_exit_code());
+                    // return Err(exit_code.into());
+                }
+                if let Some(error) = source.downcast_ref::<UsbWasmError>() {
+                    match error {
+                        UsbWasmError::RusbError(err) => {
+                            println!("{}", err);
+                        }
+                        _ => {
+                            println!("{}", error);
+                        }
+                    }
                     // return Err(exit_code.into());
                 }
                 println!("Source: {}", source);

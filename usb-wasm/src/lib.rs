@@ -21,7 +21,7 @@ use wadu436::usb::{self, types::Direction};
 
 use wasmtime_wasi::WasiView;
 
-mod error;
+pub mod error;
 mod host;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
