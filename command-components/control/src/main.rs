@@ -17,13 +17,16 @@ pub fn main() -> anyhow::Result<()> {
     arduino_usb.open();
 
     // GET_DESCRIPTOR request https://www.beyondlogic.org/usbnutshell/usb6.shtml
-    let response = arduino_usb.read_control(ControlSetup {
-        request_type: ControlSetupType::Standard,
-        request_recipient: ControlSetupRecipient::Device,
-        request: 0x06,
-        value: 0x0100,
-        index: 0,
-    }, 64);
+    let response = arduino_usb.read_control(
+        ControlSetup {
+            request_type: ControlSetupType::Standard,
+            request_recipient: ControlSetupRecipient::Device,
+            request: 0x06,
+            value: 0x0100,
+            index: 0,
+        },
+        64,
+    );
 
     println!("Device Descriptor: {:?}", response);
 

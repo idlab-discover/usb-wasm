@@ -394,7 +394,7 @@ pub fn benchmark(seq_test_size_mb: usize) -> anyhow::Result<()> {
         report.sequential_write_speed = seq_test_size as f64 / write_time.as_secs_f64();
     }
 
-    {        
+    {
         let mut data = Vec::new();
         temp_file.seek(io::SeekFrom::Start(0))?;
         let start_read = std::time::Instant::now();

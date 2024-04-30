@@ -14,24 +14,18 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    #[clap(about="Print a tree of the filesystem")]
-    Tree {
-        path: Vec<String>,
-    },
-    #[clap(about="List files in the filesystem")]
-    Ls {
-        path: Vec<String>,
-    },
-    #[clap(about="Read a file from the filesystem")]
-    Cat {
-        path: Vec<String>,
-    },
-    #[clap(about="Benchmark speed of writing/reading to/from the filesystem")]
-    Benchmark {
-        megabytes: usize,
-    },
+    #[clap(about = "Print a tree of the filesystem")]
+    Tree { path: Vec<String> },
+    #[clap(about = "List files in the filesystem")]
+    Ls { path: Vec<String> },
+    #[clap(about = "Read a file from the filesystem")]
+    Cat { path: Vec<String> },
+    #[clap(about = "Benchmark speed of writing/reading to/from the filesystem")]
+    Benchmark { megabytes: usize },
     // THIS WILL WRITE BLOCKS DIRECTLY TO THE DEVICE AND WILL DESTROY YOUR PARTITION
-    #[clap(about="Benchmark raw speed of mass storage device. WARNING: THIS WILL WRITE BLOCKS DIRECTLY TO THE DEVICE AND WILL DESTROY YOUR PARTITION")]
+    #[clap(
+        about = "Benchmark raw speed of mass storage device. WARNING: THIS WILL WRITE BLOCKS DIRECTLY TO THE DEVICE AND WILL DESTROY YOUR PARTITION"
+    )]
     RawBenchmark {
         seq_megabytes: usize,
         rnd_megabytes: usize,

@@ -316,7 +316,8 @@ impl Read for MassStorageDevice {
             if let Some(entry) = self.cache.find(|item| item.block == block) {
                 // Found in cache
                 if block == start_block && block == end_block {
-                    buf[..].copy_from_slice(&entry.data[offset_in_start_block..offset_in_end_block]);
+                    buf[..]
+                        .copy_from_slice(&entry.data[offset_in_start_block..offset_in_end_block]);
                 } else if block == start_block {
                     buf[..512 - offset_in_start_block]
                         .copy_from_slice(&entry.data[offset_in_start_block..]);
@@ -381,17 +382,14 @@ impl Read for MassStorageDevice {
             // Copy the data into the buffer
             if start == start_block && end == end_block + 1 {
                 buf[..].copy_from_slice(
-                    &data[offset_in_start_block
-                        ..(num_blocks - 1) * 512 + offset_in_end_block],
+                    &data[offset_in_start_block..(num_blocks - 1) * 512 + offset_in_end_block],
                 );
             } else if start == start_block {
                 buf[..(512 - offset_in_start_block) + ((end - start_block - 1) as usize) * 512]
                     .copy_from_slice(&data[offset_in_start_block..(num_blocks - 1) * 512]);
             } else if end == end_block + 1 {
                 buf[(512 - offset_in_start_block) + ((start - start_block - 1) as usize) * 512..]
-                    .copy_from_slice(
-                        &data[..(num_blocks - 1) * 512 + offset_in_end_block],
-                    );
+                    .copy_from_slice(&data[..(num_blocks - 1) * 512 + offset_in_end_block]);
             } else {
                 // General case
                 buf[(512 - offset_in_start_block) + ((start - start_block - 1) as usize) * 512
@@ -492,8 +490,11 @@ impl Write for MassStorageDevice {
                 if let Some(item) = self.cache.find(|item| item.block == key) {
                     item.data.copy_from_slice(&data);
                 } else {
-                    let value =
-                        CacheEntry::from_vec(key, &data[i as usize * 512..(i + 1) as usize * 512], false);
+                    let value = CacheEntry::from_vec(
+                        key,
+                        &data[i as usize * 512..(i + 1) as usize * 512],
+                        false,
+                    );
                     if let Some(evicted_entry) = self.cache.insert(value) {
                         if evicted_entry.dirty {
                             self.write_blocks(key, 1, &evicted_entry.data);

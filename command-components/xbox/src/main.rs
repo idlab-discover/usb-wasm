@@ -154,7 +154,8 @@ pub fn main() -> anyhow::Result<()> {
     io::stdout().flush()?;
 
     loop {
-        let data = xbox_controller.read_interrupt(&endpoint, endpoint.descriptor().max_packet_size as u64);
+        let data =
+            xbox_controller.read_interrupt(&endpoint, endpoint.descriptor().max_packet_size as u64);
         if data.len() == 18 {
             let state = parse_xbox_controller_data(&data[0..18]);
             let state_str = state.to_string();

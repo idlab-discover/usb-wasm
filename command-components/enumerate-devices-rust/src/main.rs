@@ -1,6 +1,4 @@
-use usb_wasm_bindings::{
-    device::{UsbDevice},
-};
+use usb_wasm_bindings::device::UsbDevice;
 
 pub fn main() -> anyhow::Result<()> {
     for device in UsbDevice::enumerate() {
