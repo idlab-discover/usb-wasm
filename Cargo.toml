@@ -1,23 +1,3 @@
-[package]
-name = "wasmtime-usb-cli"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-anyhow = { workspace = true }
-color-eyre = "0.6.2"
-serde = { version = "1.0.193", features = ["derive"] }
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-ureq = { version = "2.9.1", features = ["json"] }
-usb-wasm = { workspace = true }
-wasmtime = { workspace = true }
-wasmtime-wasi = { workspace = true }
-
 [workspace]
 members = [
     "command-components/control",
@@ -26,9 +6,12 @@ members = [
     "command-components/xbox",
     "command-components/mass-storage",
     "command-components/enumerate-devices-rust",
+    "wasmtime-usb",
     "usb-wasm",
     "usb-wasm-bindings",
 ]
+default-members = ["wasmtime-usb"]
+resolver = "2"
 
 [workspace.dependencies]
 usb-wasm = { path = "usb-wasm" }

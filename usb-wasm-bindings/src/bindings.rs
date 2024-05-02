@@ -1719,7 +1719,7 @@ mod _rt {
     impl AsI32 for i32 {
         #[inline]
         fn as_i32(self) -> i32 {
-            self
+            self as i32
         }
     }
 
@@ -1814,7 +1814,7 @@ mod _rt {
     impl AsI64 for i64 {
         #[inline]
         fn as_i64(self) -> i64 {
-            self
+            self as i64
         }
     }
 
