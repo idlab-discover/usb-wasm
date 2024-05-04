@@ -51,47 +51,81 @@ pub fn main() -> anyhow::Result<()> {
     let data = "Ping Ping Pong :)";
     let data_raw = data.as_bytes();
 
+    let mut latencies: Vec<std::time::Duration> = Vec::new();
+    const REPEATS: usize = 10;
+
     match interface.descriptor().interface_protocol {
         0x01 => {
             println!("Using protocol 0x01 (Bulk)");
-            loop {
-                let bytes_written = arduino_usb.write_bulk(&endpoint_out, data_raw);
-                println!("Sent {} bytes (bulk): {:?}", bytes_written, data);
+            for _ in 0..REPEATS {
+                println!("Sending {} bytes (bulk): {:?}", data_raw.len(), data);
+                let start = std::time::Instant::now();
+                arduino_usb.write_bulk(&endpoint_out, data_raw);
                 let data = arduino_usb.read_bulk(
                     &endpoint_in,
                     endpoint_in.descriptor().max_packet_size as u64,
                 );
+                let end = std::time::Instant::now();
+                latencies.push(end.duration_since(start));
                 let buf_utf8 = String::from_utf8_lossy(&data);
-                println!("Read {} bytes (bulk): {:?}", data.len(), buf_utf8);
+                println!("Received {} bytes (bulk): {:?}", data.len(), buf_utf8);
             }
         }
         0x02 => {
             println!("Using protocol 0x02 (Interrupt)");
-            loop {
-                let bytes_written = arduino_usb.write_interrupt(&endpoint_out, data_raw);
-                println!("Sent {} bytes (interrupt): {:?}", bytes_written, data);
+            for _ in 0..REPEATS {
+                println!("Sending {} bytes (interrupt): {:?}", data_raw.len(), data);
+                let start = std::time::Instant::now();
+                arduino_usb.write_interrupt(&endpoint_out, data_raw);
                 let data = arduino_usb.read_interrupt(
                     &endpoint_in,
                     endpoint_in.descriptor().max_packet_size as u64,
                 );
+                let end = std::time::Instant::now();
+                latencies.push(end.duration_since(start));
                 let buf_utf8 = String::from_utf8_lossy(&data);
-                println!("Read {} bytes (interrupt): {:?}", data.len(), buf_utf8);
+                println!("Received {} bytes (interrupt): {:?}", data.len(), buf_utf8);
             }
         }
         0x03 => {
             println!("Using protocol 0x03 (Isochronous)");
-            loop {
-                let bytes_written = arduino_usb.write_isochronous(&endpoint_out, data_raw);
-                println!("Sent {} bytes (isochronous): {:?}", bytes_written, data);
+            for _ in 0..REPEATS {
+                println!("Sending {} bytes (isochronous): {:?}", data_raw.len(), data);
+                let start = std::time::Instant::now();
+                arduino_usb.write_isochronous(&endpoint_out, data_raw);
                 let data = arduino_usb.read_isochronous(&endpoint_in);
+                let end = std::time::Instant::now();
+                latencies.push(end.duration_since(start));
                 let buf_utf8 = String::from_utf8_lossy(&data);
-                println!("Read {} bytes (isochronous): {:?}", data.len(), buf_utf8);
+                println!(
+                    "Received {} bytes (isochronous): {:?}",
+                    data.len(),
+                    buf_utf8
+                );
             }
         }
         _ => {
             println!("Unknown protocol number");
         }
     }
+
+    latencies.sort();
+
+    println!("Latencies:");
+    for latency in latencies.iter() {
+        println!("{:?}", latency);
+    }
+
+    println!(
+        "Average latency: {:?}",
+        latencies.iter().sum::<std::time::Duration>().as_secs_f64() / REPEATS as f64
+    );
+    println!(
+        "Median latency: {:?}",
+        latencies.iter().nth(latencies.len() / 2).unwrap()
+    );
+    println!("Max latency: {:?}", latencies.iter().max().unwrap());
+    println!("Min latency: {:?}", latencies.iter().min().unwrap());
 
     Ok(())
 }
