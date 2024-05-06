@@ -59,7 +59,14 @@ impl<T: WasiView> HostUsbDevice for T {
             let protocol_code = filter.protocol_code.map_or(true, |protocol_code| {
                 protocol_code == descriptor.device_protocol
             });
-            let serial_number = filter.serial_number == descriptor.serial_number;
+            let serial_number = filter.serial_number.as_ref().map_or(true, |serial_number| {
+                descriptor
+                    .serial_number
+                    .as_ref()
+                    .map_or(false, |device_serial_number| {
+                        serial_number == device_serial_number
+                    })
+            });
 
             vendor_id && product_id && class_code && subclass_code && protocol_code && serial_number
         });
