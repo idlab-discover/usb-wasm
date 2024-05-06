@@ -29,6 +29,7 @@ enum Command {
     RawBenchmark {
         seq_megabytes: usize,
         rnd_megabytes: usize,
+        samples: usize,
     },
     // TODO: Copy
 }
@@ -55,7 +56,8 @@ pub fn main() -> anyhow::Result<()> {
         Command::RawBenchmark {
             seq_megabytes,
             rnd_megabytes,
-        } => benchmark_raw_speed(1, seq_megabytes, rnd_megabytes)?,
+            samples,
+        } => benchmark_raw_speed(1, seq_megabytes, rnd_megabytes, samples)?,
     }
 
     Ok(())

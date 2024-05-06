@@ -244,6 +244,7 @@ pub fn benchmark_raw_speed(
     test_count: usize,
     seq_test_size_mb: usize,
     rnd_test_size_mb: usize,
+    samples: usize,
 ) -> anyhow::Result<()> {
     let mut msd = get_mass_storage_device()?;
     let properties = msd.get_properties();
@@ -267,86 +268,99 @@ pub fn benchmark_raw_speed(
         human_readable_file_size(rnd_test_size_mb as u64 * 1024 * 1024, 2),
     );
     const NUM_BLOCKS: u32 = 2048;
-    let mut report = Report {
-        sequential_write_speed: 0.0,
-        sequential_read_speed: 0.0,
-        random_write_speed: 0.0,
-        random_read_speed: 0.0,
-    };
+    let mut reports = vec![];
+    for _ in 0..samples {
+        let mut report = Report {
+            sequential_write_speed: 0.0,
+            sequential_read_speed: 0.0,
+            random_write_speed: 0.0,
+            random_read_speed: 0.0,
+        };
 
-    let seq_num_repetitions: u32 = ((seq_test_size / (NUM_BLOCKS * 512) as usize) as u32).max(1);
+        let seq_num_repetitions: u32 =
+            ((seq_test_size / (NUM_BLOCKS * 512) as usize) as u32).max(1);
 
-    // Benchmark SEQUENTIAL reads and writes:
-    for _ in 0..test_count {
-        let mut data = vec![0_u8; NUM_BLOCKS as usize * 512];
-        data[..].try_fill(&mut rng)?;
+        // Benchmark SEQUENTIAL reads and writes:
+        for _ in 0..test_count {
+            let mut data = vec![0_u8; NUM_BLOCKS as usize * 512];
+            data[..].try_fill(&mut rng)?;
 
-        let address = 8192;
-        // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
-        let start_write = std::time::Instant::now();
-        for i in 0..seq_num_repetitions {
-            msd.write_blocks(address + i * NUM_BLOCKS, NUM_BLOCKS as u16, &data);
+            let address = 8192;
+            // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
+            let start_write = std::time::Instant::now();
+            for i in 0..seq_num_repetitions {
+                msd.write_blocks(address + i * NUM_BLOCKS, NUM_BLOCKS as u16, &data);
+            }
+            let end_write = std::time::Instant::now();
+            let write_time = end_write - start_write;
+            report.sequential_write_speed += seq_test_size as f64 / write_time.as_secs_f64();
         }
-        let end_write = std::time::Instant::now();
-        let write_time = end_write - start_write;
-        report.sequential_write_speed += seq_test_size as f64 / write_time.as_secs_f64();
-    }
-    report.sequential_write_speed /= test_count as f64;
+        report.sequential_write_speed /= test_count as f64;
 
-    for _ in 0..test_count {
-        let address = 8192;
-        // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
-        let start_read = std::time::Instant::now();
-        for i in 0..seq_num_repetitions {
-            msd.read_blocks(address + i * NUM_BLOCKS, NUM_BLOCKS as u16);
+        for _ in 0..test_count {
+            let address = 8192;
+            // rng.gen_range(0..properties.total_number_of_blocks - NUM_REPETITIONS * NUM_BLOCKS);
+            let start_read = std::time::Instant::now();
+            for i in 0..seq_num_repetitions {
+                msd.read_blocks(address + i * NUM_BLOCKS, NUM_BLOCKS as u16);
+            }
+            let end_read = std::time::Instant::now();
+            let read_time = end_read - start_read;
+            report.sequential_read_speed += seq_test_size as f64 / read_time.as_secs_f64();
         }
-        let end_read = std::time::Instant::now();
-        let read_time = end_read - start_read;
-        report.sequential_read_speed += seq_test_size as f64 / read_time.as_secs_f64();
-    }
-    report.sequential_read_speed /= test_count as f64;
+        report.sequential_read_speed /= test_count as f64;
 
-    let rnd_num_repetitions: u32 = ((rnd_test_size / (NUM_BLOCKS * 512) as usize) as u32).max(1);
-    // Benchmark RANDOM reads and writes:
-    for _ in 0..test_count {
-        let mut data = vec![0_u8; NUM_BLOCKS as usize * 512];
-        data[..].try_fill(&mut rng)?;
+        let rnd_num_repetitions: u32 =
+            ((rnd_test_size / (NUM_BLOCKS * 512) as usize) as u32).max(1);
+        // Benchmark RANDOM reads and writes:
+        for _ in 0..test_count {
+            let mut data = vec![0_u8; NUM_BLOCKS as usize * 512];
+            data[..].try_fill(&mut rng)?;
 
-        let addresses: Vec<u32> = (0..rnd_num_repetitions)
-            .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
-            .collect();
-        let start_write = std::time::Instant::now();
-        for address in addresses {
-            msd.write_blocks(address, NUM_BLOCKS as u16, &data);
+            let addresses: Vec<u32> = (0..rnd_num_repetitions)
+                .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
+                .collect();
+            let start_write = std::time::Instant::now();
+            for address in addresses {
+                msd.write_blocks(address, NUM_BLOCKS as u16, &data);
+            }
+            let end_write = std::time::Instant::now();
+            let write_time = end_write - start_write;
+            report.random_write_speed += seq_test_size as f64 / write_time.as_secs_f64();
         }
-        let end_write = std::time::Instant::now();
-        let write_time = end_write - start_write;
-        report.random_write_speed += seq_test_size as f64 / write_time.as_secs_f64();
-    }
-    report.random_write_speed /= test_count as f64;
+        report.random_write_speed /= test_count as f64;
 
-    for _ in 0..test_count {
-        let addresses: Vec<u32> = (0..rnd_num_repetitions)
-            .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
-            .collect();
-        let start_read = std::time::Instant::now();
-        for address in addresses {
-            msd.read_blocks(address, NUM_BLOCKS as u16);
+        for _ in 0..test_count {
+            let addresses: Vec<u32> = (0..rnd_num_repetitions)
+                .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
+                .collect();
+            let start_read = std::time::Instant::now();
+            for address in addresses {
+                msd.read_blocks(address, NUM_BLOCKS as u16);
+            }
+            let end_read = std::time::Instant::now();
+            let read_time = end_read - start_read;
+            report.random_read_speed += seq_test_size as f64 / read_time.as_secs_f64();
         }
-        let end_read = std::time::Instant::now();
-        let read_time = end_read - start_read;
-        report.random_read_speed += seq_test_size as f64 / read_time.as_secs_f64();
+        report.random_read_speed /= test_count as f64;
+
+        info!(
+            "SEQ WRITE: {}/s, SEQ READ: {}/s, RND WRITE: {}/s, RND READ: {}/s",
+            human_readable_file_size(report.sequential_write_speed as u64, 2),
+            human_readable_file_size(report.sequential_read_speed as u64, 2),
+            human_readable_file_size(report.random_write_speed as u64, 2),
+            human_readable_file_size(report.random_read_speed as u64, 2),
+        );
+
+        reports.push(report);
     }
-    report.random_read_speed /= test_count as f64;
 
-    info!(
-        "SEQ WRITE: {}/s, SEQ READ: {}/s, RND WRITE: {}/s, RND READ: {}/s",
-        human_readable_file_size(report.sequential_write_speed as u64, 2),
-        human_readable_file_size(report.sequential_read_speed as u64, 2),
-        human_readable_file_size(report.random_write_speed as u64, 2),
-        human_readable_file_size(report.random_read_speed as u64, 2),
-    );
 
+    let mut file = std::fs::File::create("raw_benchmark_report.csv")?;
+    writeln!(file, "SEQ WRITE,SEQ READ,RND WRITE,RND READ")?;
+    for report in reports {
+        writeln!(file, "{},{},{},{}", report.sequential_write_speed, report.sequential_read_speed, report.random_write_speed, report.random_read_speed)?;
+    }
     // for report in reports {
 
     // }

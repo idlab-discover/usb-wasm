@@ -16,7 +16,7 @@ control:
 
 mass-storage *arg:
     just build-mass-storage
-    cargo run --release -- ./out/mass-storage.wasm {{arg}}
+    cargo run --release -- --dir=. ./out/mass-storage.wasm -- {{arg}}
 
 enumerate-devices-go:
     just build-enumerate-devices-go

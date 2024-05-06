@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use usb_wasm::error::UsbWasmError;
 use wasmtime::component::{Component, Linker};
@@ -6,20 +7,25 @@ use wasmtime::{Config, Engine, Store};
 use wasmtime_usb_cli::HostState;
 use wasmtime_wasi::{I32Exit, WasiView};
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[clap(short, long)]
+    dir: Option<String>,
+    command: String,
+    #[clap(trailing_var_arg = true, allow_hyphen_values = true)]
+    command_args: Vec<String>,
+}
+
 fn main() -> anyhow::Result<()> {
     // Set up logging
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    // TODO create a proper CLI here
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        println!("Usage: {} <command component>", args[0]);
-        return Ok(());
-    }
+    let args = Args::parse();
 
-    let command_component_path = std::path::Path::new(&args[1]);
+    let command_component_path = std::path::Path::new(args.command.as_str());
 
     // Configure an `Engine` and link in all the host components (Wasi preview 2 and our USB component)
     let config = {
@@ -33,8 +39,9 @@ fn main() -> anyhow::Result<()> {
     register_host_components(&mut linker)?;
 
     // Set up the Store with the command line arguments
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let mut store = Store::new(&engine, HostState::new(&args));
+    let mut command_args = args.command_args;
+    command_args.insert(0, args.command.clone());
+    let mut store = Store::new(&engine, HostState::new(&command_args, args.dir));
 
     // Load the component (should be an instance of the wasi command component)
     let component = Component::from_file(&engine, command_component_path)?;
