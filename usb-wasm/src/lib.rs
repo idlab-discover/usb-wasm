@@ -13,7 +13,10 @@ wasmtime::component::bindgen!({
 use error::UsbWasmError;
 use rusb::{
     constants::LIBUSB_TRANSFER_TYPE_ISOCHRONOUS,
-    ffi::{libusb_alloc_transfer, libusb_handle_events_completed, libusb_submit_transfer},
+    ffi::{
+        libusb_alloc_transfer, libusb_handle_events_completed,
+        libusb_submit_transfer,
+    },
     GlobalContext, Recipient, RequestType, Speed, UsbContext,
 };
 use std::{error::Error, sync::Arc, time::Duration};
@@ -338,15 +341,21 @@ impl UsbDevice {
             transfer_ref.length = buffer.len() as _;
             transfer_ref.num_iso_packets = num_packets;
             transfer_ref.user_data = completed_ptr as *mut _;
+
+            let iso_packet_descs = unsafe {
+                std::slice::from_raw_parts_mut(
+                    transfer_ref.iso_packet_desc.as_mut_ptr(),
+                    num_packets as usize,
+                )
+            };
             for i in 0..num_packets as usize {
-                let entry = unsafe { (*transfer).iso_packet_desc.get_unchecked_mut(i) };
+                let entry = iso_packet_descs.get_mut(i).unwrap();
                 entry.length = buffer_size as _;
                 entry.status = 0;
                 entry.actual_length = 0;
             }
 
             transfer_ref.callback = libusb_transfer_cb;
-
             let err = unsafe { libusb_submit_transfer(transfer) };
             if err != 0 {
                 return Err(error_from_libusb(err).into());
@@ -364,7 +373,7 @@ impl UsbDevice {
 
             let mut output_data = Vec::with_capacity(num_packets as usize);
             for i in 0..num_packets as usize {
-                let entry = unsafe { (*transfer).iso_packet_desc.get_unchecked_mut(0) };
+                let entry = iso_packet_descs.get_mut(i).unwrap();
                 if entry.status == 0 {
                     output_data.push(
                         buffer[i * buffer_size..i * buffer_size + entry.actual_length as usize]
@@ -389,7 +398,7 @@ impl UsbDevice {
         buffers: &[Vec<u8>],
     ) -> Result<u64, UsbWasmError> {
         if let Some(handle) = &mut self.handle {
-            let transfer = unsafe { libusb_alloc_transfer(1) };
+            let transfer = unsafe { libusb_alloc_transfer(buffers.len() as _) };
             let transfer_ref = unsafe { &mut *transfer };
 
             let mut completed = 0_i32;
@@ -401,15 +410,21 @@ impl UsbDevice {
             transfer_ref.dev_handle = handle.as_raw();
             transfer_ref.endpoint = endpoint;
             transfer_ref.transfer_type = LIBUSB_TRANSFER_TYPE_ISOCHRONOUS;
-            transfer_ref.timeout = 1000;
+            transfer_ref.timeout = TIMEOUT.as_millis() as _;
             transfer_ref.buffer = buffer.as_ptr() as *mut _;
             transfer_ref.length = buffer.len() as _;
-            transfer_ref.num_iso_packets = 1;
+            transfer_ref.num_iso_packets = buffers.len() as _;
             // It should be okay to pass in this (stack) variable, as this function will not return untill after the transfer is complete.
             transfer_ref.user_data = completed_ptr as *mut _;
 
+            let iso_packet_descs = unsafe {
+                std::slice::from_raw_parts_mut(
+                    transfer_ref.iso_packet_desc.as_mut_ptr(),
+                    buffers.len(),
+                )
+            };
             for (i, buffer) in buffers.iter().enumerate() {
-                let entry = unsafe { (*transfer).iso_packet_desc.get_unchecked_mut(i) };
+                let entry = iso_packet_descs.get_mut(i).unwrap();
                 entry.length = buffer.len() as _;
                 entry.status = 0;
                 entry.actual_length = 0;
@@ -434,7 +449,7 @@ impl UsbDevice {
 
             let mut bytes_written: u64 = 0;
             for i in 0..buffers.len() {
-                let entry = unsafe { (*transfer).iso_packet_desc.get_unchecked_mut(i) };
+                let entry = iso_packet_descs.get_mut(i).unwrap();
                 if entry.status == 0 {
                     bytes_written += entry.actual_length as u64;
                 } else {

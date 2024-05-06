@@ -8,7 +8,7 @@ xbox:
 
 ping:
     just build-ping
-    cargo run -- ./out/ping.wasm
+    cargo run --release -- ./out/ping.wasm
 
 control:
     just build-control
@@ -47,8 +47,8 @@ build-xbox:
 
 build-ping:
     just regenerate-bindings
-    cargo build -p ping --target=wasm32-wasi
-    wasm-tools component new ./target/wasm32-wasi/debug/ping.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/ping.wasm
+    cargo build -p ping --release --target=wasm32-wasi
+    wasm-tools component new ./target/wasm32-wasi/release/ping.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/ping.wasm
 
 build-control:
     just regenerate-bindings

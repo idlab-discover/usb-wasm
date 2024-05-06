@@ -48,11 +48,11 @@ pub fn main() -> anyhow::Result<()> {
 
     println!("Connected to Arduino");
 
-    let data = "Ping Ping Pong :)";
+    let data = "PING";
     let data_raw = data.as_bytes();
 
     let mut latencies: Vec<std::time::Duration> = Vec::new();
-    const REPEATS: usize = 10;
+    const REPEATS: usize = 100;
 
     match interface.descriptor().interface_protocol {
         0x01 => {
@@ -118,7 +118,7 @@ pub fn main() -> anyhow::Result<()> {
 
     println!(
         "Average latency: {:?}",
-        latencies.iter().sum::<std::time::Duration>().as_secs_f64() / REPEATS as f64
+        latencies.iter().sum::<std::time::Duration>() / REPEATS as _
     );
     println!(
         "Median latency: {:?}",
