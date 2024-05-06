@@ -1,3 +1,6 @@
+use std::fs::File;
+use std::io::Write;
+
 use usb_wasm_bindings::{device::UsbDevice, types::Filter};
 
 use anyhow::anyhow;
@@ -126,6 +129,11 @@ pub fn main() -> anyhow::Result<()> {
     );
     println!("Max latency: {:?}", latencies.iter().max().unwrap());
     println!("Min latency: {:?}", latencies.iter().min().unwrap());
+
+    let mut file = File::create("latencies_in_ms.txt")?;
+    for latency in latencies.iter() {
+        writeln!(file, "{:?}", 1000. * latency.as_secs_f64())?;
+    }
 
     Ok(())
 }

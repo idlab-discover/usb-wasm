@@ -8,7 +8,7 @@ xbox:
 
 ping:
     just build-ping
-    cargo run --release -- ./out/ping.wasm
+    cargo run --release -- --dir=. ./out/ping.wasm
 
 control:
     just build-control
