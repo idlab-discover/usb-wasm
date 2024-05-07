@@ -151,7 +151,7 @@ impl UsbDevice {
     }
 
     pub fn open(&mut self) -> Result<(), UsbWasmError> {
-        let mut handle = self.device.open()?;
+        let handle = self.device.open()?;
         handle.set_auto_detach_kernel_driver(true)?;
 
         self.handle = Some(handle);

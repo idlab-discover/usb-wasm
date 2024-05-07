@@ -1,4 +1,3 @@
-use cap_std::ambient_authority;
 use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 
 pub struct HostState {
@@ -13,11 +12,11 @@ impl HostState {
 
         if let Some(preopen) = preopen {
             wasi_ctx.preopened_dir(
-                cap_std::fs::Dir::open_ambient_dir(preopen.as_str(), ambient_authority()).unwrap(),
+                preopen.as_str(),
+                preopen.as_str(),
                 DirPerms::all(),
                 FilePerms::all(),
-                preopen.as_str(),
-            );
+            ).unwrap();
         }
 
         let wasi_table = ResourceTable::new();

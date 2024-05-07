@@ -45,13 +45,9 @@ fn main() -> anyhow::Result<()> {
 
     // Load the component (should be an instance of the wasi command component)
     let component = Component::from_file(&engine, command_component_path)?;
-    let (bindings, _instance) =
-        wasmtime_wasi::command::sync::Command::instantiate(&mut store, &component, &linker)?;
 
-    // Here our `greet` function doesn't take any parameters for the component,
-    // but in the Wasmtime embedding API the first argument is always a `Store`.
-    let result = bindings.wasi_cli_run().call_run(&mut store);
-    // .expect("failed to invoke 'run' function");
+    let (command, _instance) = wasmtime_wasi::bindings::sync::Command::instantiate(&mut store, &component, &linker)?;
+    let result = command.wasi_cli_run().call_run(&mut store);
 
     match result {
         Ok(Ok(())) => Ok(()),
@@ -82,7 +78,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn register_host_components<T: WasiView>(linker: &mut Linker<T>) -> anyhow::Result<()> {
-    wasmtime_wasi::command::sync::add_to_linker(linker)?;
+    wasmtime_wasi::add_to_linker_sync(linker)?;
     usb_wasm::add_to_linker(linker)?;
 
     Ok(())

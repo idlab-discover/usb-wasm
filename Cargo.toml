@@ -18,8 +18,8 @@ usb-wasm = { path = "usb-wasm" }
 usb-wasm-bindings = { path = "usb-wasm-bindings" }
 
 anyhow = "1.0.75"
-wasmtime = "19.0.0"
-wasmtime-wasi = "19.0.0"
+wasmtime = "20.0.1"
+wasmtime-wasi = "20.0.1"
 
 [profile.release]
 # strip = true

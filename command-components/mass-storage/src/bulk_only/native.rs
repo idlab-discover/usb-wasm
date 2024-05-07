@@ -33,7 +33,7 @@ impl BulkOnlyTransportDevice {
     pub fn new(device: Device<GlobalContext>, configuration: u8, interface: u8) -> Self {
         let config_descriptor = device.config_descriptor(configuration).unwrap();
 
-        let mut handle = device.open().unwrap();
+        let handle = device.open().unwrap();
         handle.set_auto_detach_kernel_driver(true).unwrap();
         handle.reset().unwrap();
         if handle.active_configuration().unwrap() != config_descriptor.number() {
