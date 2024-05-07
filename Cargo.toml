@@ -23,8 +23,7 @@ wasmtime = "20.0.1"
 wasmtime-wasi = "20.0.1"
 
 [profile.release]
-# strip = true
-debug = true
+strip = true
 
 [profile.dev.package."*"]
 debug = false
