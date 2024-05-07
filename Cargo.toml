@@ -9,6 +9,7 @@ members = [
     "wasmtime-usb",
     "usb-wasm",
     "usb-wasm-bindings",
+    "command-components/pause",
 ]
 default-members = ["wasmtime-usb"]
 resolver = "2"
@@ -28,4 +29,3 @@ debug = true
 [profile.dev.package."*"]
 debug = false
 opt-level = 3
-

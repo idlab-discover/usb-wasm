@@ -68,6 +68,11 @@ build-enumerate-devices-rust:
 build-enumerate-devices-go:
     cd command-components/enumerate-devices-go && ./build.sh
 
+build-pause:
+    just regenerate-bindings
+    cargo build -p pause --release --target=wasm32-wasi
+    wasm-tools component new ./target/wasm32-wasi/release/pause.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/pause.wasm
+
 verify:
     wit-bindgen markdown wit/ --out-dir ./out/wit-md/
 

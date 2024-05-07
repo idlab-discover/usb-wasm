@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
-use usb_wasm::error::UsbWasmError;
+// use usb_wasm::error::UsbWasmError;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_usb_cli::HostState;
@@ -62,17 +62,18 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(exit_code.process_exit_code());
                     // return Err(exit_code.into());
                 }
-                if let Some(error) = source.downcast_ref::<UsbWasmError>() {
-                    match error {
-                        UsbWasmError::RusbError(err) => {
-                            println!("{}", err);
-                        }
-                        _ => {
-                            println!("{}", error);
-                        }
-                    }
-                    // return Err(exit_code.into());
-                }
+                
+                // if let Some(error) = source.downcast_ref::<UsbWasmError>() {
+                //     match error {
+                //         UsbWasmError::RusbError(err) => {
+                //             println!("{}", err);
+                //         }
+                //         _ => {
+                //             println!("{}", error);
+                //         }
+                //     }
+                //     // return Err(exit_code.into());
+                // }
                 println!("Source: {}", source);
             }
             println!("e: {}", e);
@@ -83,7 +84,7 @@ fn main() -> anyhow::Result<()> {
 
 fn register_host_components<T: WasiView>(linker: &mut Linker<T>) -> anyhow::Result<()> {
     wasmtime_wasi::command::sync::add_to_linker(linker)?;
-    usb_wasm::add_to_linker(linker)?;
+    // usb_wasm::add_to_linker(linker)?;
 
     Ok(())
 }
