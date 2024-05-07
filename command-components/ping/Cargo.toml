@@ -7,4 +7,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-usb-wasm-bindings = { workspace = true, features = ["traits"]}
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+usb-wasm-bindings = { workspace = true, features = ["traits"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rusb = "0.9.4"

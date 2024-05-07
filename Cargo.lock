@@ -1275,6 +1275,7 @@ name = "ping"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rusb",
  "usb-wasm-bindings",
 ]
 

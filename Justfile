@@ -6,9 +6,9 @@ xbox:
     just build-xbox
     cargo run -- ./out/xbox.wasm
 
-ping:
+ping *arg:
     just build-ping
-    cargo run --release -- --dir=. ./out/ping.wasm
+    cargo run --release -- --dir=. ./out/ping.wasm -- {{arg}}
 
 control:
     just build-control
