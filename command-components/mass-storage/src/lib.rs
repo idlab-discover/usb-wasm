@@ -269,7 +269,8 @@ pub fn benchmark_raw_speed(
     );
     const NUM_BLOCKS: u32 = 2048;
     let mut reports = vec![];
-    for _ in 0..samples {
+    for i in 0..samples {
+        info!("Starting iteration {}", i);
         let mut report = Report {
             sequential_write_speed: 0.0,
             sequential_read_speed: 0.0,
@@ -353,13 +354,24 @@ pub fn benchmark_raw_speed(
         );
 
         reports.push(report);
-    }
 
+        if i < samples - 1 {
+            info!("Waiting 5 seconds to let the USB drive cool down...");
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    }
 
     let mut file = std::fs::File::create("raw_benchmark_report.csv")?;
     writeln!(file, "SEQ WRITE,SEQ READ,RND WRITE,RND READ")?;
     for report in reports {
-        writeln!(file, "{},{},{},{}", report.sequential_write_speed, report.sequential_read_speed, report.random_write_speed, report.random_read_speed)?;
+        writeln!(
+            file,
+            "{},{},{},{}",
+            report.sequential_write_speed,
+            report.sequential_read_speed,
+            report.random_write_speed,
+            report.random_read_speed
+        )?;
     }
     // for report in reports {
 
