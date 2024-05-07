@@ -5,6 +5,6 @@
 
 set -ex
 
-cargo install --locked wit-bindgen-cli@0.21.0
+cargo install --locked wit-bindgen-cli@0.24.0
 wit-bindgen rust ../wit --out-dir ./src --std-feature --type-section-suffix rust-wasi-from-crates-io
 cargo fmt

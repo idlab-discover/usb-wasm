@@ -9,13 +9,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-cap-std = "3.0.0"
 clap = { version = "4.5.4", features = ["derive"] }
-color-eyre = "0.6.2"
 serde = { version = "1.0.193", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-ureq = { version = "2.9.1", features = ["json"] }
 # usb-wasm = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
