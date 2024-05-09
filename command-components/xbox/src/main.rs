@@ -141,11 +141,22 @@ pub fn main() -> anyhow::Result<()> {
                 && e.descriptor().endpoint_number == 0x01
         })
         .ok_or(anyhow!("Could not find endpoint"))?;
+    let endpoint_out = interface
+        .endpoints()
+        .into_iter()
+        .find(|e| {
+            e.descriptor().direction == usb_wasm_bindings::types::Direction::Out
+                && e.descriptor().endpoint_number == 0x01
+        })
+        .ok_or(anyhow!("Could not find endpoint"))?;
 
     // Open device
     xbox_controller.open();
     // xbox_controller.select_configuration(&configuration);
     xbox_controller.claim_interface(&interface);
+
+    // Set up the device
+    xbox_controller.write_interrupt(&endpoint_out, &[0x05, 0x20, 0x00, 0x01, 0x00]);
 
     println!("Connected to Xbox Controller");
     let mut previous_length = 0;
