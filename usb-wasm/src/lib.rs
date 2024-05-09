@@ -148,10 +148,12 @@ impl UsbDevice {
     }
 
     pub fn open(&mut self) -> Result<(), UsbWasmError> {
-        let handle = self.device.open()?;
-        let _ = handle.set_auto_detach_kernel_driver(true);
+        if self.handle.is_none() {
+            let handle = self.device.open()?;
+            let _ = handle.set_auto_detach_kernel_driver(true);
 
-        self.handle = Some(handle);
+            self.handle = Some(handle);
+        }
 
         Ok(())
     }
@@ -159,11 +161,17 @@ impl UsbDevice {
     pub fn active_configuration(&mut self) -> Result<UsbConfiguration, UsbWasmError> {
         let configuration = self.device.active_config_descriptor()?;
         let description = self.language.and_then(|language| {
-            self.device
-                .open()
-                .unwrap()
-                .read_configuration_string(language, &configuration, TIMEOUT)
-                .ok()
+            if let Some(handle) = &self.handle {
+                handle
+                    .read_configuration_string(language, &configuration, TIMEOUT)
+                    .ok()
+            } else {
+                self.device
+                    .open()
+                    .unwrap()
+                    .read_configuration_string(language, &configuration, TIMEOUT)
+                    .ok()
+            }
         });
 
         // Find the index of this configuration
@@ -541,11 +549,17 @@ impl UsbDevice {
             let configuration = self.device.config_descriptor(i).unwrap();
 
             let description = self.language.and_then(|language| {
-                self.device
-                    .open()
-                    .unwrap()
-                    .read_configuration_string(language, &configuration, TIMEOUT)
-                    .ok()
+                if let Some(handle) = &self.handle {
+                    handle
+                        .read_configuration_string(language, &configuration, TIMEOUT)
+                        .ok()
+                } else {
+                    self.device
+                        .open()
+                        .unwrap()
+                        .read_configuration_string(language, &configuration, TIMEOUT)
+                        .ok()
+                }
             });
             configurations.push(UsbConfiguration {
                 language: self.language,
