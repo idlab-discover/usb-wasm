@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use tracing::trace;
 
-const TIMEOUT: Duration = Duration::from_secs(1);
+const TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Error)]
 pub enum BulkOnlyTransportError {
