@@ -13,10 +13,7 @@ wasmtime::component::bindgen!({
 use error::UsbWasmError;
 use rusb::{
     constants::LIBUSB_TRANSFER_TYPE_ISOCHRONOUS,
-    ffi::{
-        libusb_alloc_transfer, libusb_handle_events_completed,
-        libusb_submit_transfer,
-    },
+    ffi::{libusb_alloc_transfer, libusb_handle_events_completed, libusb_submit_transfer},
     GlobalContext, Recipient, RequestType, Speed, UsbContext,
 };
 use std::{error::Error, sync::Arc, time::Duration};
@@ -152,7 +149,7 @@ impl UsbDevice {
 
     pub fn open(&mut self) -> Result<(), UsbWasmError> {
         let handle = self.device.open()?;
-        handle.set_auto_detach_kernel_driver(true)?;
+        let _ = handle.set_auto_detach_kernel_driver(true);
 
         self.handle = Some(handle);
 

@@ -34,7 +34,7 @@ impl BulkOnlyTransportDevice {
         let config_descriptor = device.config_descriptor(configuration).unwrap();
 
         let handle = device.open().unwrap();
-        handle.set_auto_detach_kernel_driver(true).unwrap();
+        let _ = handle.set_auto_detach_kernel_driver(true);
         handle.reset().unwrap();
         if handle.active_configuration().unwrap() != config_descriptor.number() {
             handle.set_active_configuration(configuration).unwrap();

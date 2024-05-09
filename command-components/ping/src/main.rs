@@ -7,7 +7,9 @@ use usb_wasm_bindings::{device::UsbDevice, types::Filter};
 use anyhow::anyhow;
 
 pub fn main() -> anyhow::Result<()> {
-    let data = std::env::args().nth(1).ok_or(anyhow!("Usage: ping <data>"))?;
+    let data = std::env::args()
+        .nth(1)
+        .ok_or(anyhow!("Usage: ping <data>"))?;
 
     #[cfg(target_arch = "wasm32")]
     let arduino_usb = UsbDevice::request_device(&Filter {
@@ -86,7 +88,7 @@ pub fn main() -> anyhow::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         handle.reset()?;
-        handle.set_auto_detach_kernel_driver(true)?;
+        let _ = handle.set_auto_detach_kernel_driver(true);
         handle.claim_interface(0x00)?;
     }
 

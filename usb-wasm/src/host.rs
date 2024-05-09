@@ -103,13 +103,17 @@ impl<T: WasiView> HostUsbDevice for T {
 
     fn open(&mut self, rep: wasmtime::component::Resource<UsbDevice>) -> wasmtime::Result<()> {
         let device = self.table().get_mut(&rep)?;
+        println!("Open");
         device.open()?;
+        println!("Done open");
         Ok(())
     }
 
     fn reset(&mut self, rep: wasmtime::component::Resource<UsbDevice>) -> wasmtime::Result<()> {
         let device = self.table().get_mut(&rep)?;
+        println!("Reset");
         device.reset()?;
+        println!("Reset finished");
         Ok(())
     }
 
