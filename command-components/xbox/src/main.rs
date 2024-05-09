@@ -144,7 +144,7 @@ pub fn main() -> anyhow::Result<()> {
 
     // Open device
     xbox_controller.open();
-    xbox_controller.select_configuration(&configuration);
+    // xbox_controller.select_configuration(&configuration);
     xbox_controller.claim_interface(&interface);
 
     println!("Connected to Xbox Controller");
