@@ -33,7 +33,7 @@ flamegraph-mass-storage:
 perf-mass-storage:
     just build-mass-storage
     cargo build --release
-    perf record --call-graph dwarf -k mono ./target/release/wasmtime-usb ./out/mass-storage.wasm benchmark
+    perf record --call-graph dwarf -k mono ./target/release/wasmtime-usb  --profile ./out/mass-storage.wasm benchmark
 
 build-lsusb:
     just regenerate-bindings

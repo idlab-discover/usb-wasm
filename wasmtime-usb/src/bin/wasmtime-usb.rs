@@ -12,6 +12,8 @@ use wasmtime_wasi::{I32Exit, WasiView};
 struct Args {
     #[clap(short, long)]
     dir: Option<String>,
+    #[clap(short, long)]
+    profile: bool,
     command: String,
     #[clap(trailing_var_arg = true, allow_hyphen_values = true)]
     command_args: Vec<String>,
@@ -28,10 +30,13 @@ fn main() -> anyhow::Result<()> {
     let command_component_path = std::path::Path::new(args.command.as_str());
 
     // Configure an `Engine` and link in all the host components (Wasi preview 2 and our USB component)
+
     let config = {
         let mut config = Config::new();
         config.wasm_component_model(true);
-        config.profiler(wasmtime::ProfilingStrategy::PerfMap);
+        if args.profile {
+            config.profiler(wasmtime::ProfilingStrategy::PerfMap);
+        }
         config
     };
     let engine = Engine::new(&config)?;
@@ -46,7 +51,8 @@ fn main() -> anyhow::Result<()> {
     // Load the component (should be an instance of the wasi command component)
     let component = Component::from_file(&engine, command_component_path)?;
 
-    let (command, _instance) = wasmtime_wasi::bindings::sync::Command::instantiate(&mut store, &component, &linker)?;
+    let (command, _instance) =
+        wasmtime_wasi::bindings::sync::Command::instantiate(&mut store, &component, &linker)?;
     let result = command.wasi_cli_run().call_run(&mut store);
 
     match result {
