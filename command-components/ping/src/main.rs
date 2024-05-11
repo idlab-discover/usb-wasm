@@ -162,12 +162,12 @@ pub fn main() -> anyhow::Result<()> {
                 println!("Sending {} bytes (bulk): {:?}", data_raw.len(), data);
                 let start = std::time::Instant::now();
                 handle.write_bulk(0x01, data_raw, Duration::from_secs(60))?;
-                let mut data = vec![0; 512];
+                let mut data = vec![0; 64];
                 let bytes_read = handle.read_bulk(0x82, &mut data, Duration::from_secs(60))?;
                 let end = std::time::Instant::now();
                 latencies.push(end.duration_since(start));
                 let buf_utf8 = String::from_utf8_lossy(&data[..bytes_read]);
-                println!("Received {} bytes (bulk): {:?}", data.len(), buf_utf8);
+                println!("Received {} bytes (bulk): {:?}", bytes_read, buf_utf8);
             }
         }
         0x02 => {
@@ -181,7 +181,7 @@ pub fn main() -> anyhow::Result<()> {
                 let end = std::time::Instant::now();
                 latencies.push(end.duration_since(start));
                 let buf_utf8 = String::from_utf8_lossy(&data[..bytes_read]);
-                println!("Received {} bytes (interrupt): {:?}", data.len(), buf_utf8);
+                println!("Received {} bytes (interrupt): {:?}", bytes_read, buf_utf8);
             }
         }
         0x03 => {
