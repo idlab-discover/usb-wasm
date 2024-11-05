@@ -4,6 +4,7 @@ members = [
     "command-components/lsusb",
     "command-components/ping",
     "command-components/xbox",
+    "command-components/xbox-maze",
     "command-components/mass-storage",
     "command-components/enumerate-devices-rust",
     "wasmtime-usb",
@@ -27,4 +28,3 @@ strip = true
 [profile.dev.package."*"]
 debug = false
 opt-level = 3
-

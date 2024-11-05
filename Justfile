@@ -45,6 +45,11 @@ build-xbox:
     cargo build -p xbox --target=wasm32-wasip1
     wasm-tools component new ./target/wasm32-wasip1/debug/xbox.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/xbox.wasm
 
+build-xbox-maze:
+    just regenerate-bindings
+    cargo build -p xbox-maze --target=wasm32-wasip1
+    wasm-tools component new ./target/wasm32-wasip1/debug/xbox-maze.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/xbox-maze.wasm
+
 build-ping:
     just regenerate-bindings
     cargo build -p ping --release --target=wasm32-wasip1

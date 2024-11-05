@@ -115,7 +115,7 @@ pub fn parse_xbox_controller_data(data: &[u8]) -> XboxControllerState {
 pub fn main() -> anyhow::Result<()> {
     let xbox_controller = UsbDevice::request_device(&Filter {
         vendor_id: Some(0x045e),
-        product_id: Some(0x02d1),
+        product_id: Some(0x02ea),
         ..Default::default()
     })
     .ok_or(anyhow!("No Xbox Controller found!"))?;
@@ -138,17 +138,17 @@ pub fn main() -> anyhow::Result<()> {
         .into_iter()
         .find(|e| {
             e.descriptor().direction == usb_wasm_bindings::types::Direction::In
-                && e.descriptor().endpoint_number == 0x01
+                && e.descriptor().endpoint_number == 0x02
         })
-        .ok_or(anyhow!("Could not find endpoint"))?;
+        .ok_or(anyhow!("Could not find IN endpoint"))?;
     let endpoint_out = interface
         .endpoints()
         .into_iter()
         .find(|e| {
             e.descriptor().direction == usb_wasm_bindings::types::Direction::Out
-                && e.descriptor().endpoint_number == 0x01
+                && e.descriptor().endpoint_number == 0x02
         })
-        .ok_or(anyhow!("Could not find endpoint"))?;
+        .ok_or(anyhow!("Could not find OUT endpoint"))?;
 
     // Open device
     xbox_controller.open();
