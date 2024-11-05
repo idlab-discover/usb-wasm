@@ -37,33 +37,33 @@ perf-mass-storage:
 
 build-lsusb:
     just regenerate-bindings
-    cargo build -p lsusb --target=wasm32-wasi
-    wasm-tools component new ./target/wasm32-wasi/debug/lsusb.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/lsusb.wasm
+    cargo build -p lsusb --target=wasm32-wasip1
+    wasm-tools component new ./target/wasm32-wasip1/debug/lsusb.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/lsusb.wasm
 
 build-xbox:
     just regenerate-bindings
-    cargo build -p xbox --target=wasm32-wasi
-    wasm-tools component new ./target/wasm32-wasi/debug/xbox.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/xbox.wasm
+    cargo build -p xbox --target=wasm32-wasip1
+    wasm-tools component new ./target/wasm32-wasip1/debug/xbox.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/xbox.wasm
 
 build-ping:
     just regenerate-bindings
-    cargo build -p ping --release --target=wasm32-wasi
-    wasm-tools component new ./target/wasm32-wasi/release/ping.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/ping.wasm
+    cargo build -p ping --release --target=wasm32-wasip1
+    wasm-tools component new ./target/wasm32-wasip1/release/ping.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/ping.wasm
 
 build-control:
     just regenerate-bindings
-    cargo build -p control --target=wasm32-wasi
-    wasm-tools component new ./target/wasm32-wasi/debug/control.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/control.wasm
+    cargo build -p control --target=wasm32-wasip1
+    wasm-tools component new ./target/wasm32-wasip1/debug/control.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/control.wasm
 
 build-mass-storage:
     just regenerate-bindings
-    cargo build -p mass-storage --release --target=wasm32-wasi
-    wasm-tools component new ./target/wasm32-wasi/release/mass-storage.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/mass-storage.wasm
+    cargo build -p mass-storage --release --target=wasm32-wasip1
+    wasm-tools component new ./target/wasm32-wasip1/release/mass-storage.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/mass-storage.wasm
 
 build-enumerate-devices-rust:
     just regenerate-bindings
-    cargo build -p enumerate-devices-rust --release --target=wasm32-wasi
-    wasm-tools component new ./target/wasm32-wasi/release/enumerate-devices-rust.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/enumerate-devices-rust.wasm
+    cargo build -p enumerate-devices-rust --release --target=wasm32-wasip1
+    wasm-tools component new ./target/wasm32-wasip1/release/enumerate-devices-rust.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/enumerate-devices-rust.wasm
 
 build-enumerate-devices-go:
     cd command-components/enumerate-devices-go && ./build.sh
