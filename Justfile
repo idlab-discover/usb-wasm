@@ -35,6 +35,9 @@ perf-mass-storage:
     cargo build --release
     perf record --call-graph dwarf -k mono ./target/release/wasmtime-usb  --profile ./out/mass-storage.wasm benchmark
 
+build-runtime:
+    cargo build
+
 build-lsusb:
     just regenerate-bindings
     cargo build -p lsusb --target=wasm32-wasip1

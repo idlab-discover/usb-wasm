@@ -18,15 +18,13 @@ Prototype design and implementation of an interface for accessing and communicat
 
 ## Building
 
-To build the runtime, run the following command in the root of this repository.
+We use `just` as build system. You can see all supported commands by running `just --list`. You can build the modified wasmtime runtime with the following command.
 
 ```shell
-cargo build
+just build-runtime
 ```
 
-We use `just` as build system for the guest components. You can see all supported commands by running `just --list`. You can use just to build any of the guest components (command components).
-
-For example, to build the xbox pacman demo, run the following.
+You can also use `just` to build any of the guest components (command components). For example, to build the xbox pacman demo, run the following.
 
 ```shell
 just build-xbox-maze
