@@ -142,7 +142,7 @@ const WALL: &str = "\x1B[38;5;75m▓\x1B[0m";
 const FOOD: &str = "\x1B[38;5;214m•\x1B[0m";
 const EMPTY: &str = " ";
 const PACMAN: &str = "\x1B[38;5;226m◉\x1B[0m";
-const GHOST: &str = "\x1B[38;5;160m󰊠\x1B[0m";
+const GHOST: &str = "\x1B[38;5;160m⭑\x1B[0m";
 
 fn print_maze(maze: &[[&str; 30]; 14]) {
     for row in maze.iter() {
@@ -271,8 +271,8 @@ pub fn main() -> anyhow::Result<()> {
     print!("\x1B[2J");
     print!("\x1B[H");
 
-    println!("Connected to Xbox Controller\n");
-    println!("{}", XboxControllerState::default()); // Print empty values first until we get our first communication
+    // println!("Connected to Xbox Controller\n");
+    // println!("{}", XboxControllerState::default()); // Print empty values first until we get our first communication
     print_maze(&maze);
     io::stdout().flush()?;
 
@@ -286,8 +286,8 @@ pub fn main() -> anyhow::Result<()> {
         if data.len() == 18 {
             let state = parse_xbox_controller_data(&data[0..18]);
 
-            println!("Connected to Xbox Controller\n");
-            println!("{}", state);
+            // println!("Connected to Xbox Controller\n");
+            // println!("{}", state);
             print_maze(&maze);
 
             if !button_down {
