@@ -1,3 +1,7 @@
 [submodule "command-components/xbox-maze/rusb-wasi"]
 	path = command-components/xbox-maze/rusb-wasi
 	url = git@github.com:siwieme/rusb-wasi.git
+
+[submodule "rusb-wasi"]
+	path = rusb-wasi
+	url = git@github.com:siwieme/rusb-wasi.git
