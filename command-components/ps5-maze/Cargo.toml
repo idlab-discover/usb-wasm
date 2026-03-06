@@ -1,0 +1,19 @@
+[package]
+name = "ps5-maze"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+byteorder = "1.5.0"
+colored = "2.0.4"
+anyhow = { workspace = true }
+rusb = { path = "../../rusb-wasi" }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "ps5-maze"
+path = "src/main.rs"

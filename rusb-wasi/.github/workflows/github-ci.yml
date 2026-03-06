@@ -1,0 +1,90 @@
+name: Rust
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-code:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libusb-1.0-0-dev
+
+      - name: Run check and format
+        run: |
+          cargo check --all-targets --examples
+          cargo fmt --check
+
+  build:
+    needs: [check-code]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            apt: "libusb-1.0-0-dev"
+            experimental: false
+            features: ""
+
+          - os: ubuntu-latest
+            apt: "libudev-dev"
+            experimental: false
+            features: ""
+
+          - os: macos-latest
+            experimental: true
+
+          - os: macos-latest
+            experimental: true
+            features: "--features vendored"
+
+          - os: windows-latest
+            experimental: false
+            features: ""
+
+          - os: windows-latest
+            vcpkg: x86-windows-static-md
+            rust: stable-i686-pc-windows-msvc
+            experimental: false
+            features: ""
+
+          - os: windows-latest
+            vcpkg: x64-windows-static-md
+            rust: stable-x86_64-pc-windows-msvc
+            experimental: false
+            features: ""
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install
+        if: ${{ contains(matrix.os, 'ubuntu') }}
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ${{ matrix.apt }}
+
+      - name: Install additional rust toolchain
+        if: ${{ matrix.rust != '' }}
+        run: rustup toolchain install ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+
+      - name: Install vcpkg
+        if: ${{ matrix.vcpkg != '' }}
+        run: C:/vcpkg/vcpkg integrate install && C:/vcpkg/vcpkg install libusb:${{ matrix.vcpkg }}
+
+      - name: Build
+        run: cargo build --workspace -vv --examples ${{ matrix.features }}
+
+      - name: Run tests
+        run: cargo test --workspace --verbose --all ${{ matrix.features }} -- --nocapture
