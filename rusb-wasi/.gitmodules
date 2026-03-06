@@ -1,3 +1,0 @@
-[submodule "libusb"]
-	path = libusb1-sys/libusb
-	url = git@github.com:idlab-discover/libusb-wasi.git
