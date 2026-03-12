@@ -26,6 +26,14 @@ enumerate-devices-rust:
     just build-enumerate-devices-rust
     cargo run -- ./out/enumerate-devices-rust.wasm
 
+webcam-cv:
+    just build-webcam-cv
+    cargo run -- ./out/webcam-cv.wasm
+
+ps5-maze:
+    just build-ps5-maze
+    cargo run -- ./out/ps5-maze.wasm
+
 flamegraph-mass-storage:
     just build-mass-storage
     cargo flamegraph --no-inline --bin wasmtime-usb -- ./out/mass-storage.wasm benchmark
@@ -72,6 +80,37 @@ build-enumerate-devices-rust:
     just regenerate-bindings
     cargo build -p enumerate-devices-rust --release --target=wasm32-wasip1
     wasm-tools component new ./target/wasm32-wasip1/release/enumerate-devices-rust.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/enumerate-devices-rust.wasm
+
+SYSROOT := "/Users/sibrenwieme/Documents/Masterproef/usb-wasm/rusb-wasi/examples/wasi-workload/wasi-sysroot"
+
+build-webcam-cv:
+    # just regenerate-bindings
+    mkdir -p out
+    @echo "WARNING: webcam-cv lacks WASI-compatible deps (nokhwa). Building WIP..."
+    PKG_CONFIG_DIR="" \
+    PKG_CONFIG_LIBDIR="{{SYSROOT}}/usr/lib/pkgconfig:{{SYSROOT}}/usr/share/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR="{{SYSROOT}}" \
+    PKG_CONFIG_ALLOW_CROSS=1 \
+    LIBUSB_STATIC=1 \
+    cargo build -p webcam-cv --target wasm32-wasip2 --release
+    cp target/wasm32-wasip2/release/webcam_cv.wasm out/webcam-cv.wasm
+
+build-ps5-maze:
+    just regenerate-bindings
+    mkdir -p out
+    PKG_CONFIG_DIR="" \
+    PKG_CONFIG_LIBDIR="{{SYSROOT}}/usr/lib/pkgconfig:{{SYSROOT}}/usr/share/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR="{{SYSROOT}}" \
+    PKG_CONFIG_ALLOW_CROSS=1 \
+    LIBUSB_STATIC=1 \
+    cargo clean -p libusb1-sys
+    PKG_CONFIG_DIR="" \
+    PKG_CONFIG_LIBDIR="{{SYSROOT}}/usr/lib/pkgconfig:{{SYSROOT}}/usr/share/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR="{{SYSROOT}}" \
+    PKG_CONFIG_ALLOW_CROSS=1 \
+    LIBUSB_STATIC=1 \
+    cargo build -p ps5-maze --target wasm32-wasip2 --release
+    cp target/wasm32-wasip2/release/ps5_maze.wasm out/ps5-maze.wasm
 
 build-enumerate-devices-go:
     cd command-components/enumerate-devices-go && ./build.sh

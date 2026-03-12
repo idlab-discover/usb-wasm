@@ -1,0 +1,37 @@
+package component:usb@0.2.1;
+
+world host {
+    import transfers;
+    import errors;
+    import device;
+    import descriptors;
+    import configuration;
+    import usb-hotplug;
+
+    export transfers;
+    export errors;
+    export device;
+    export descriptors;
+    export configuration;
+    export usb-hotplug;
+}
+
+world guest {
+    import transfers;
+    import errors;
+    import device;
+    import descriptors;
+    import configuration;
+    import usb-hotplug;
+}
+
+world cguest {
+    import transfers;
+    import errors;
+    import device;
+    import descriptors;
+    import configuration;
+    import usb-hotplug;
+
+    export wasi:cli/run@0.2.5;
+}

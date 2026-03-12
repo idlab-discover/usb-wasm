@@ -1,0 +1,60 @@
+package component:usb@0.2.1;
+
+interface descriptors {
+    use errors.{libusb-error};
+
+    /// USB Device Descriptor (18 bytes)
+    record device-descriptor {
+        length: u8,                  // Size of this descriptor in bytes (should be 18)
+        descriptor-type: u8,        // DEVICE descriptor type (1)
+        usb-version-bcd: u16,       // USB specification version (bcdUSB)
+        device-class: u8,           // Class code (bDeviceClass)
+        device-subclass: u8,        // Subclass code (bDeviceSubClass)
+        device-protocol: u8,        // Protocol code (bDeviceProtocol)
+        max-packet-size0: u8,       // Max packet size for endpoint 0
+        vendor-id: u16,             // Vendor ID (idVendor)
+        product-id: u16,            // Product ID (idProduct)
+        device-version-bcd: u16,    // Device release number (bcdDevice)
+        manufacturer-index: u8,     // Index of string descriptor for manufacturer
+        product-index: u8,          // Index of string descriptor for product
+        serial-number-index: u8,    // Index of string descriptor for serial number
+        num-configurations: u8      // Number of possible configurations
+    }
+
+    /// USB Configuration Descriptor (9 bytes)
+    record configuration-descriptor {
+        length: u8,                 // Size of this descriptor in bytes (should be 9)
+        descriptor-type: u8,       // CONFIGURATION descriptor type (2)
+        total-length: u16,         // Total length of data including all sub-descriptors
+        interfaces: list<interface-descriptor>, // List of interfaces in this configuration
+        configuration-value: u8,   // Value to use for SetConfiguration
+        configuration-index: u8,   // Index of string descriptor describing this configuration
+        attributes: u8,            // Bitmap: self/bus powered, remote wakeup
+        max-power: u8              // Max power consumption (in 2mA units)
+    }
+
+    /// USB Interface Descriptor (9 bytes)
+    record interface-descriptor {
+        length: u8,                 // Size of this descriptor in bytes (should be 9)
+        descriptor-type: u8,        // INTERFACE descriptor type (4)
+        interface-number: u8,       // Number of this interface
+        alternate-setting: u8,      // Value to select alternate setting
+        endpoints: list<endpoint-descriptor>, // list of endpoints
+        interface-class: u8,        // Class code
+        interface-subclass: u8,     // Subclass code
+        interface-protocol: u8,     // Protocol code
+        interface-index: u8         // Index of string descriptor describing this interface
+    }
+
+    /// USB Endpoint Descriptor (7+ bytes)
+    record endpoint-descriptor {
+        length: u8,                 // Size of this descriptor in bytes (should be 7)
+        descriptor-type: u8,        // ENDPOINT descriptor type (5)
+        endpoint-address: u8,       // Endpoint number and direction (bitmask)
+        attributes: u8,             // Transfer type and synchronization type
+        max-packet-size: u16,       // Max packet size this endpoint can handle
+        interval: u8,               // Polling interval (in ms for interrupt/bulk)
+        refresh: u8,                // (Isochronous) Data rate refresh interval
+        synch-address: u8           // (Isochronous) Sync endpoint address
+    }
+}

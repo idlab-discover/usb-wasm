@@ -1,6 +1,6 @@
 use usb_wasm_bindings::{
-    device::{UsbConfiguration, UsbDevice, UsbEndpoint, UsbInterface},
-    types::{Direction, TransferType},
+    descriptors::{ConfigurationDescriptor, DeviceDescriptor, EndpointDescriptor, InterfaceDescriptor},
+    device::{list_devices, UsbDevice},
 };
 
 fn class_to_string(class: u8) -> &'static str {
@@ -53,9 +53,13 @@ impl Section {
 }
 
 fn print_section(section: Section, indent_level: usize) {
-    let indent = "\t".repeat(indent_level);
+    let indent = "  ".repeat(indent_level);
 
     println!("{indent}{}", section.name);
+
+    if section.content.is_empty() {
+        return;
+    }
 
     let (first_column_width, second_column_width) = section
         .content
@@ -66,7 +70,7 @@ fn print_section(section: Section, indent_level: usize) {
 
     for (name, value, comment) in section.content {
         println!(
-            "{indent}\t{:<first_column_width$}   {:>second_column_width$} {}",
+            "{indent}  {:<first_column_width$}   {:>second_column_width$} {}",
             name,
             value,
             comment.unwrap_or_default()
@@ -74,14 +78,13 @@ fn print_section(section: Section, indent_level: usize) {
     }
 }
 
-fn device_section(device: &UsbDevice) -> Section {
-    let descriptor = device.descriptor();
+fn device_section(descriptor: &DeviceDescriptor) -> Section {
     let mut section = Section::new("Device Descriptor");
     section.add(
         "USB Version",
         format!(
-            "{}.{}{}",
-            descriptor.usb_version.0, descriptor.usb_version.1, descriptor.usb_version.2
+            "{:#06x}",
+            descriptor.usb_version_bcd
         ),
         None,
     );
@@ -109,61 +112,37 @@ fn device_section(device: &UsbDevice) -> Section {
     section.add(
         "Device Version",
         format!(
-            "{}.{}{}",
-            descriptor.device_version.0, descriptor.device_version.1, descriptor.device_version.2
+            "{:#06x}",
+            descriptor.device_version_bcd
         ),
         None,
     );
     section.add(
-        "Manufacturer",
-        String::default(),
-        descriptor.manufacturer_name,
+        "Num Configurations",
+        descriptor.num_configurations.to_string(),
+        None,
     );
-    section.add("Product", String::default(), descriptor.product_name);
-    section.add("Serial Number", String::default(), descriptor.serial_number);
     section
 }
 
-fn configuration_section(configuration: &UsbConfiguration) -> Section {
-    let descriptor = configuration.descriptor();
+fn configuration_section(descriptor: &ConfigurationDescriptor) -> Section {
     let mut section = Section::new("Configuration Descriptor");
     section.add(
         "Configuration Value",
-        format!("{:#04x}", descriptor.number),
+        format!("{:#04x}", descriptor.configuration_value),
         None,
     );
     section.add(
-        "Configuration Description",
-        String::default(),
-        descriptor.description,
-    );
-    section.add(
-        "Self Powered",
-        (if descriptor.self_powered {
-            "✓"
-        } else {
-            "✗"
-        })
-        .to_owned(),
+        "Attributes",
+        format!("{:#04x}", descriptor.attributes),
         None,
     );
-    section.add(
-        "Remote Wakeup",
-        (if descriptor.remote_wakeup {
-            "✓"
-        } else {
-            "✗"
-        })
-        .to_owned(),
-        None,
-    );
-    section.add("Max Power", format!("{}mA", descriptor.max_power), None);
+    section.add("Max Power", format!("{}mA", descriptor.max_power as u32 * 2), None);
     section
 }
 
-fn interface_section(interface: &UsbInterface) -> Section {
+fn interface_section(descriptor: &InterfaceDescriptor) -> Section {
     let mut section = Section::new("Interface Descriptor");
-    let descriptor = interface.descriptor();
 
     section.add(
         "Interface Number",
@@ -190,73 +169,34 @@ fn interface_section(interface: &UsbInterface) -> Section {
         format!("{:#04x}", descriptor.interface_protocol),
         None,
     );
-    section.add(
-        "Interface Name",
-        String::default(),
-        descriptor.interface_name,
-    );
 
     section
 }
 
-fn endpoint_section(endpoint: &UsbEndpoint) -> Section {
+fn endpoint_section(descriptor: &EndpointDescriptor) -> Section {
     let mut section = Section::new("Endpoint Descriptor");
-    let descriptor = endpoint.descriptor();
 
     section.add(
-        "Endpoint Number",
-        format!("{:#04x}", descriptor.endpoint_number),
+        "Endpoint Address",
+        format!("{:#04x}", descriptor.endpoint_address),
         None,
     );
 
     section.add(
-        "Direction",
-        match descriptor.direction {
-            Direction::In => "In",
-            Direction::Out => "Out",
-        }
-        .to_owned(),
+        "Attributes",
+        format!("{:#04x}", descriptor.attributes),
         None,
     );
-
-    section.add(
-        "Transfer Type",
-        match descriptor.transfer_type {
-            TransferType::Control => "Control",
-            TransferType::Isochronous => "Isochronous",
-            TransferType::Bulk => "Bulk",
-            TransferType::Interrupt => "Interrupt",
-        }
-        .to_owned(),
-        None,
-    );
-
-    // section.add(
-    //     "Synchronization Type",
-    //     match descriptor.synchronization_type {
-    //         usb::SynchronizationType::None => "None",
-    //         usb::SynchronizationType::Asynchronous => "Asynchronous",
-    //         usb::SynchronizationType::Adaptive => "Adaptive",
-    //         usb::SynchronizationType::Synchronous => "Synchronous",
-    //     }
-    //     .to_owned(),
-    //     None,
-    // );
-
-    // section.add(
-    //     "Usage Type",
-    //     match descriptor.usage_type {
-    //         usb::UsageType::Data => "Data",
-    //         usb::UsageType::Feedback => "Feedback",
-    //         usb::UsageType::ImplicitFeedbackData => "Implicit Feedback Data",
-    //     }
-    //     .to_owned(),
-    //     None,
-    // );
 
     section.add(
         "Max Packet Size",
-        format!("{:#04x}", descriptor.max_packet_size),
+        format!("{:#06x}", descriptor.max_packet_size),
+        None,
+    );
+
+    section.add(
+        "Interval",
+        format!("{}", descriptor.interval),
         None,
     );
 
@@ -264,29 +204,39 @@ fn endpoint_section(endpoint: &UsbEndpoint) -> Section {
 }
 
 pub fn main() -> anyhow::Result<()> {
+    let devices = list_devices().map_err(|e| anyhow::anyhow!("Failed to list devices: {:?}", e))?;
+    
     let mut first = true;
-    for device in UsbDevice::enumerate() {
+    for (device, descriptor, location) in devices {
         if !first {
             println!();
         }
         first = false;
-        let descriptor = device.descriptor();
+        
         println!(
-            "ID {:#04x}:{:#04x} - {} {} ({})",
+            "Bus {:03} Device {:03}: ID {:04x}:{:04x} (Speed: {:?})",
+            location.bus_number,
+            location.device_address,
             descriptor.vendor_id,
             descriptor.product_id,
-            descriptor.manufacturer_name.unwrap_or("N/A".to_owned()),
-            descriptor.product_name.unwrap_or("N/A".to_owned()),
-            class_to_string(descriptor.device_class),
+            location.speed,
         );
-        print_section(device_section(&device), 0);
-        for configuration in device.configurations() {
-            print_section(configuration_section(&configuration), 1);
-
-            for interface in configuration.interfaces() {
-                print_section(interface_section(&interface), 2);
-                for endpoint in interface.endpoints() {
-                    print_section(endpoint_section(&endpoint), 3);
+        
+        print_section(device_section(&descriptor), 0);
+        
+        for i in 0..descriptor.num_configurations {
+            match device.get_configuration_descriptor(i) {
+                Ok(config) => {
+                    print_section(configuration_section(&config), 1);
+                    for iface in config.interfaces {
+                        print_section(interface_section(&iface), 2);
+                        for ep in iface.endpoints {
+                            print_section(endpoint_section(&ep), 3);
+                        }
+                    }
+                }
+                _ => {
+                    println!("  Failed to get configuration descriptor {}", i);
                 }
             }
         }

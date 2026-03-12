@@ -322,6 +322,15 @@ pub fn run() -> anyhow::Result<()> {
 
     // Detach kernel driver if needed
     let _ = handle.set_auto_detach_kernel_driver(true);
+    if let Ok(true) = handle.kernel_driver_active(interface_number) {
+        println!("Kernel driver active on interface {}, detaching...", interface_number);
+        handle.detach_kernel_driver(interface_number)?;
+    }
+
+    // Set configuration 1 (required for some macOS capture scenarios)
+    println!("Setting active configuration to 1...");
+    handle.set_active_configuration(1)?;
+
     handle.claim_interface(interface_number)?;
     
     // Xbox controller Initialization Magic

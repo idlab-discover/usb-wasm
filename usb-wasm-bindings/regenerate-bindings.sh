@@ -5,6 +5,6 @@
 
 set -ex
 
-cargo install --locked wit-bindgen-cli@0.24.0
-wit-bindgen rust ../wit --out-dir ./src --std-feature --type-section-suffix rust-wasi-from-crates-io
+cargo install --locked wit-bindgen-cli@0.36.0
+wit-bindgen rust ../wit --out-dir ./src --std-feature --world cguest --generate-all --pub-export-macro --default-bindings-module usb_wasm_bindings
 cargo fmt

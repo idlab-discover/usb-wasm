@@ -1,0 +1,20 @@
+[package]
+name = "webcam-cv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+log = "0.4"
+usb-wasm-bindings = { workspace = true }
+wit-bindgen = "0.36.0"
+image = { version = "0.24.7", default-features = false, features = ["jpeg", "png"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+
+
+[[bin]]
+name = "webcam-cv"
+path = "src/main.rs"

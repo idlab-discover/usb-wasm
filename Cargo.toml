@@ -6,6 +6,7 @@ members = [
     "command-components/xbox",
     "command-components/xbox-maze",
     "command-components/ps5-maze",
+    "command-components/webcam-cv",
     "command-components/mass-storage",
     "command-components/enumerate-devices-rust",
     "wasmtime-usb",
