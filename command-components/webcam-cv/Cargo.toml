@@ -9,6 +9,7 @@ log = "0.4"
 usb-wasm-bindings = { workspace = true }
 wit-bindgen = "0.36.0"
 image = { version = "0.24.7", default-features = false, features = ["jpeg", "png"] }
+jpeg-decoder = "0.3"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
