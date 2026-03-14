@@ -1,0 +1,9 @@
+package component:usb@0.2.1;
+
+interface configuration {
+    /// ConfigValue is used to specify a configuration or an unconfigured state.
+    variant config-value {
+        unconfigured,      // Corresponds to -1 in libusb (unconfigure device)
+        value(u8)          // A valid configuration value (bConfigurationValue)
+    }
+}

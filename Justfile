@@ -30,6 +30,9 @@ webcam-cv:
     just build-webcam-cv
     cargo run -- ./out/webcam-cv.wasm
 
+native-webcam:
+    cargo run -p webcam-cv
+
 ps5-maze:
     just build-ps5-maze
     cargo run -- ./out/ps5-maze.wasm
@@ -84,7 +87,7 @@ build-enumerate-devices-rust:
 SYSROOT := "/Users/sibrenwieme/Documents/Masterproef/usb-wasm/rusb-wasi/examples/wasi-workload/wasi-sysroot"
 
 build-webcam-cv:
-    # just regenerate-bindings
+    just regenerate-bindings
     mkdir -p out
     @echo "WARNING: webcam-cv lacks WASI-compatible deps (nokhwa). Building WIP..."
     PKG_CONFIG_DIR="" \

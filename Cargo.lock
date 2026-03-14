@@ -2606,7 +2606,10 @@ dependencies = [
  "anyhow",
  "image",
  "jpeg-decoder",
+ "libc",
+ "libusb1-sys",
  "log",
+ "rusb",
  "usb-wasm-bindings",
  "wit-bindgen",
 ]

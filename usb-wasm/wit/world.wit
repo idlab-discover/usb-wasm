@@ -33,5 +33,5 @@ world cguest {
     import configuration;
     import usb-hotplug;
 
-    export wasi:cli/run@0.2.0;
+    export wasi:cli/run@0.2.5;
 }

@@ -10,14 +10,26 @@
 //!   5. Save each complete frame as frame.png and render it as ASCII art.
 //!
 //! Supported pixel formats: MJPEG and YUYV (YUV 4:2:2 packed).
+//!
+//! Targets:
+//!   - wasm32-wasip2  → uses `usb_wasm_bindings` (WASI USB host ABI)
+//!   - native (macOS) → uses `rusb` + `libusb1-sys` (libusb async isochronous)
 
 use anyhow::{anyhow, Context, Result};
 use std::io::{self, BufRead, Write};
 
+// ── Target-specific USB imports ───────────────────────────────────────────────
+
+#[cfg(target_family = "wasm")]
 use usb_wasm_bindings::component::usb::{
     device::{list_devices, UsbDevice},
     transfers::{await_iso_transfer, await_transfer, TransferOptions, TransferSetup, TransferType},
 };
+
+#[cfg(not(target_family = "wasm"))]
+use rusb::UsbContext;
+#[cfg(not(target_family = "wasm"))]
+use libc;
 
 // ── UVC class constants ───────────────────────────────────────────────────────
 
@@ -28,8 +40,9 @@ const USB_SUBCLASS_VIDEO_STREAMING: u8 = 0x02;
 
 const ASCII_CHARS: &[char] = &[' ', '.', ',', '-', '~', ':', ';', '=', '!', '*', '#', '$', '@'];
 
-// ── Interface / endpoint selection ───────────────────────────────────────────
+// ── Interface / endpoint selection (WASM) ────────────────────────────────────
 
+#[cfg(target_family = "wasm")]
 fn find_best_streaming_interface(device: &UsbDevice) -> Result<(u8, u8, u8, u16)> {
     let config_desc = device
         .get_active_configuration_descriptor()
@@ -69,6 +82,53 @@ fn find_best_streaming_interface(device: &UsbDevice) -> Result<(u8, u8, u8, u16)
     best.ok_or_else(|| anyhow!("No UVC streaming interface found"))
 }
 
+// ── Interface / endpoint selection (native) ───────────────────────────────────
+
+#[cfg(not(target_family = "wasm"))]
+fn find_best_streaming_interface_native(
+    device: &rusb::Device<rusb::GlobalContext>,
+) -> Result<(u8, u8, u8, u16)> {
+    let config_desc = device.active_config_descriptor()
+        .context("Failed to get active configuration")?;
+
+    let mut best: Option<(u8, u8, u8, u16)> = None;
+
+    for iface in config_desc.interfaces() {
+        for iface_desc in iface.descriptors() {
+            if iface_desc.class_code() != USB_CLASS_VIDEO
+                || iface_desc.sub_class_code() != USB_SUBCLASS_VIDEO_STREAMING
+            {
+                continue;
+            }
+
+            for ep in iface_desc.endpoint_descriptors() {
+                use rusb::TransferType;
+                let is_iso_in = ep.direction() == rusb::Direction::In
+                    && ep.transfer_type() == TransferType::Isochronous;
+                if !is_iso_in {
+                    continue;
+                }
+
+                let mps = ep.max_packet_size();
+                let base_size  = mps & 0x7FF;
+                let multiplier = 1 + ((mps >> 11) & 0x03);
+                let effective_size = base_size * multiplier;
+
+                if best.map_or(true, |(_, _, _, s)| effective_size > s) {
+                    best = Some((
+                        iface_desc.interface_number(),
+                        iface_desc.setting_number(),
+                        ep.address(),
+                        effective_size,
+                    ));
+                }
+            }
+        }
+    }
+
+    best.ok_or_else(|| anyhow!("No UVC streaming interface found"))
+}
+
 // ── UVC payload header parsing ────────────────────────────────────────────────
 
 /// Returns `(header_length_in_bytes, end_of_frame_flag)`.
@@ -92,19 +152,74 @@ fn rgb_to_ascii(r: u8, g: u8, b: u8) -> char {
     ASCII_CHARS[idx]
 }
 
-// ── BT.601 YCbCr → RGB conversion (shared by MJPEG fallback and YUYV) ────────
+// ── BT.601 YCbCr ↔ RGB conversions ───────────────────────────────────────────
+//
+// Two variants are provided, matching the Stack Overflow answer by Camille
+// Goudeseune (https://stackoverflow.com/a/17934865):
+//
+//   • ycbcr_to_rgb_limited  – BT.601 *limited-range* (Y: 16–235, Cb/Cr: 16–240)
+//                             Used for YUYV frames from UVC cameras (broadcast /
+//                             MPEG encoding convention).
+//   • ycbcr_to_rgb_full     – BT.601 *full-range*    (Y/Cb/Cr: 0–255)
+//                             Used when the MJPEG fallback path decodes raw
+//                             YCbCr manually (JPEG colour space).
+//   • rgb_to_ycbcr_limited  – Inverse of the limited-range path (integer ops).
+//                             Useful for encoding / round-trip testing.
 
-/// Convert a single YCbCr sample (full-range BT.601) to RGB.
+/// Convert a single YCbCr sample (BT.601 **limited-range**) to RGB.
+///
+/// Coefficients from SO answer #17934865:
+///   R = 1.164·(Y−16)                  + 1.596·(Cr−128)
+///   G = 1.164·(Y−16) − 0.392·(Cb−128) − 0.813·(Cr−128)
+///   B = 1.164·(Y−16) + 2.017·(Cb−128)
 #[inline]
-fn ycbcr_to_rgb(y: u8, cb: u8, cr: u8) -> [u8; 3] {
+fn ycbcr_to_rgb_limited(y: u8, cb: u8, cr: u8) -> [u8; 3] {
+    let y  = y  as f32 - 16.0;
+    let cb = cb as f32 - 128.0;
+    let cr = cr as f32 - 128.0;
+
+    let r = (1.164 * y                   + 1.596 * cr).clamp(0.0, 255.0) as u8;
+    let g = (1.164 * y - 0.392 * cb     - 0.813 * cr).clamp(0.0, 255.0) as u8;
+    let b = (1.164 * y + 2.017 * cb                 ).clamp(0.0, 255.0) as u8;
+    [r, g, b]
+}
+
+/// Convert a single YCbCr sample (BT.601 **full-range**) to RGB.
+///
+/// Used by the MJPEG manual-decode fallback where the JPEG colour space is
+/// full-range (Y/Cb/Cr all span 0–255).
+#[inline]
+fn ycbcr_to_rgb_full(y: u8, cb: u8, cr: u8) -> [u8; 3] {
     let y  = y  as f32;
     let cb = cb as f32 - 128.0;
     let cr = cr as f32 - 128.0;
 
-    let r = (y                  + 1.402   * cr).clamp(0.0, 255.0) as u8;
-    let g = (y - 0.344136 * cb - 0.714136 * cr).clamp(0.0, 255.0) as u8;
-    let b = (y + 1.772   * cb              ).clamp(0.0, 255.0) as u8;
+    let r = (y                   + 1.402   * cr).clamp(0.0, 255.0) as u8;
+    let g = (y - 0.344136 * cb  - 0.714136 * cr).clamp(0.0, 255.0) as u8;
+    let b = (y + 1.772   * cb                 ).clamp(0.0, 255.0) as u8;
     [r, g, b]
+}
+
+/// Encode an RGB pixel to YCbCr (BT.601 **limited-range**) using integer
+/// arithmetic (SO answer #17934865 integer variant — fast, no FPU required).
+///
+///   Y  = (( 66·R + 129·G +  25·B + 128) >> 8) + 16
+///   Cb = ((-38·R -  74·G + 112·B + 128) >> 8) + 128
+///   Cr = ((112·R -  94·G -  18·B + 128) >> 8) + 128
+#[inline]
+fn rgb_to_ycbcr_limited(r: u8, g: u8, b: u8) -> [u8; 3] {
+    let (r, g, b) = (r as i32, g as i32, b as i32);
+    let y  = (( 66 * r + 129 * g +  25 * b + 128) >> 8) + 16;
+    let cb = ((-38 * r -  74 * g + 112 * b + 128) >> 8) + 128;
+    let cr = ((112 * r -  94 * g -  18 * b + 128) >> 8) + 128;
+    [y.clamp(16, 235) as u8, cb.clamp(16, 240) as u8, cr.clamp(16, 240) as u8]
+}
+
+// Backwards-compat alias: existing call-sites that pass MJPEG-fallback data
+// keep using full-range semantics unchanged.
+#[inline]
+fn ycbcr_to_rgb(y: u8, cb: u8, cr: u8) -> [u8; 3] {
+    ycbcr_to_rgb_full(y, cb, cr)
 }
 
 // ── MJPEG decoding ────────────────────────────────────────────────────────────
@@ -145,7 +260,7 @@ fn ycbcr_to_rgb(y: u8, cb: u8, cr: u8) -> [u8; 3] {
 ///
 /// If a colorspace marker is already present (JFIF APP0 or Adobe APP14)
 /// the data is returned unchanged to avoid conflicting signals.
-fn force_rgb_colorspace(data: &[u8]) -> std::borrow::Cow<[u8]> {
+fn force_rgb_colorspace(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return std::borrow::Cow::Borrowed(data);
     }
@@ -266,14 +381,15 @@ fn save_as_png(frame_data: &[u8], width: u32, height: u32) -> Result<()> {
         // YUYV 4:2:2: bytes are [Y0, Cb, Y1, Cr] per macro-pixel.
         let mut rgb_buf = Vec::with_capacity((width * height * 3) as usize);
 
+        // UVC YUYV uses BT.601 limited-range (Y: 16–235, Cb/Cr: 16–240).
         for chunk in frame_data.chunks_exact(4) {
             let y0 = chunk[0];
             let cb = chunk[1];
             let y1 = chunk[2];
             let cr = chunk[3];
 
-            rgb_buf.extend_from_slice(&ycbcr_to_rgb(y0, cb, cr));
-            rgb_buf.extend_from_slice(&ycbcr_to_rgb(y1, cb, cr));
+            rgb_buf.extend_from_slice(&ycbcr_to_rgb_limited(y0, cb, cr));
+            rgb_buf.extend_from_slice(&ycbcr_to_rgb_limited(y1, cb, cr));
         }
 
         // Pad or truncate to exact expected size.
@@ -436,8 +552,109 @@ fn emit_frame(
     }
 }
 
-// ── Main entry point ──────────────────────────────────────────────────────────
+// ── UVC frame reassembly (shared logic) ──────────────────────────────────────
 
+/// Process a flat isochronous buffer (already split into packet-stride slots)
+/// and reassemble UVC frames. Calls `emit_frame` when a complete frame is ready.
+/// Returns `true` when at least one new frame was emitted.
+fn process_iso_buffer(
+    flat_data: &[u8],
+    packet_lengths: &[usize], // actual_length per packet
+    packet_stride: usize,
+    frame_buffer: &mut Vec<u8>,
+    frame_count: &mut u32,
+    frame_started: &mut bool,
+    last_fid: &mut u8,
+    actual_frame_size: u32,
+    min_frame_size: usize,
+    captured_before: u32,
+) -> bool {
+    let mut offset = 0usize;
+    let mut emitted = false;
+
+    for actual_len in packet_lengths {
+        let actual_len = *actual_len;
+
+        if actual_len == 0 {
+            offset += packet_stride;
+            continue;
+        }
+
+        let pkt_data = &flat_data[offset..offset + actual_len];
+        offset += packet_stride;
+
+        let (hdr_len, is_eof) = parse_payload_header(pkt_data);
+        if hdr_len == 0 {
+            continue;
+        }
+
+        let fid     = pkt_data[1] & 0x01;
+        let payload = if hdr_len < pkt_data.len() { &pkt_data[hdr_len..] } else { &[][..] };
+
+        let fid_toggle = !frame_buffer.is_empty() && fid != *last_fid;
+
+        if fid_toggle {
+            if *frame_started {
+                let complete_frame = std::mem::take(frame_buffer);
+                emit_frame(&complete_frame, frame_count, actual_frame_size, min_frame_size);
+                if *frame_count > captured_before {
+                    emitted = true;
+                    *last_fid = fid;
+                    return emitted;
+                }
+            } else {
+                frame_buffer.clear();
+            }
+
+            if payload.starts_with(&[0xff, 0xd8]) {
+                frame_buffer.extend_from_slice(payload);
+                *frame_started = true;
+            } else {
+                *frame_started = false;
+            }
+
+            if *frame_count > captured_before {
+                emitted = true;
+                *last_fid = fid;
+                return emitted;
+            }
+        } else {
+            if !*frame_started {
+                if let Some(soi_pos) = payload.windows(2).position(|w| w == [0xff, 0xd8]) {
+                    frame_buffer.extend_from_slice(&payload[soi_pos..]);
+                    *frame_started = true;
+                }
+            } else {
+                frame_buffer.extend_from_slice(payload);
+            }
+
+            if *frame_started {
+                let mjpeg_complete = frame_buffer.starts_with(&[0xff, 0xd8])
+                    && frame_buffer.ends_with(&[0xff, 0xd9]);
+
+                if (is_eof || mjpeg_complete) && !frame_buffer.is_empty() {
+                    let complete_frame = std::mem::take(frame_buffer);
+                    *frame_started = false;
+                    emit_frame(&complete_frame, frame_count, actual_frame_size, min_frame_size);
+
+                    if *frame_count > captured_before {
+                        emitted = true;
+                        *last_fid = fid;
+                        return emitted;
+                    }
+                }
+            }
+        }
+
+        *last_fid = fid;
+    }
+
+    emitted
+}
+
+// ── Main entry point (WASM) ───────────────────────────────────────────────────
+
+#[cfg(target_family = "wasm")]
 pub fn run_webcam() -> Result<()> {
     println!("Starting UVC webcam capture via isochronous transfers...");
 
@@ -455,7 +672,7 @@ pub fn run_webcam() -> Result<()> {
         location.bus_number,  location.device_address
     );
 
-    let handle: usb_wasm_bindings::component::usb::device::DeviceHandle = device
+    let handle = device
         .open()
         .map_err(|e| anyhow!("{:?}", e))
         .context("Failed to open device")?;
@@ -474,10 +691,6 @@ pub fn run_webcam() -> Result<()> {
         .context("Failed to claim interface")?;
 
     // ── UVC Processing Unit initialization ───────────────────────────────────
-    // Many cameras (including Logitech) start with auto white balance disabled,
-    // producing a magenta cast. Send SET_CUR to enable AWB and auto hue via
-    // the Processing Unit (unit ID 2, Video Control interface 0).
-    // We check GET_INFO first so unsupported controls are silently skipped.
     {
         let vc_iface: u16 = 0;
         let pu_unit:  u16 = 2;
@@ -562,10 +775,6 @@ pub fn run_webcam() -> Result<()> {
         );
         println!("  dwMaxVideoFrameSize: {} bytes", actual_frame_size);
 
-        // ── Query MIN and MAX to enumerate all supported formats ─────────────
-        // GET_MIN (0x82) and GET_MAX (0x83) on VS_PROBE_CONTROL report the
-        // range of format/frame indices the camera supports. Logging these
-        // helps identify which format index corresponds to MJPEG vs YUYV.
         for (req_code, req_name) in [(0x82u8, "GET_MIN"), (0x83u8, "GET_MAX")] {
             if let Ok(xfer) = handle.new_transfer(
                 TransferType::Control,
@@ -587,21 +796,15 @@ pub fn run_webcam() -> Result<()> {
             }
         }
 
-        // ── Try each format index 1..=4 with GET_CUR to find MJPEG ──────────
-        // We send a probe SET_CUR with bFormatIndex=N, then GET_CUR to see
-        // what the camera accepted and what frame size it reports.
-        // We pick the format+frame combo with the largest dwMaxVideoFrameSize
-        // (MJPEG frames are much larger than YUYV at the same resolution).
         let mut best_format_idx = cur_format;
         let mut best_frame_idx  = cur_frame;
         let mut best_frame_size = actual_frame_size;
 
         for fmt_idx in 1u8..=4 {
             let mut probe_try = probe_data.clone();
-            probe_try[2] = fmt_idx; // bFormatIndex
-            probe_try[3] = 1;       // bFrameIndex = 1 (first/only frame for this format)
+            probe_try[2] = fmt_idx;
+            probe_try[3] = 1;
 
-            // SET_CUR probe with candidate format
             if let Ok(xfer) = handle.new_transfer(
                 TransferType::Control,
                 TransferSetup {
@@ -617,7 +820,6 @@ pub fn run_webcam() -> Result<()> {
                 let _ = await_transfer(xfer);
             }
 
-            // GET_CUR to see what the camera actually accepted
             if let Ok(xfer) = handle.new_transfer(
                 TransferType::Control,
                 TransferSetup {
@@ -639,12 +841,6 @@ pub fn run_webcam() -> Result<()> {
                             "  Format probe {}: camera accepted fmt={} frame={} maxSize={} bytes",
                             fmt_idx, accepted_fmt, accepted_frm, sz
                         );
-                        // Prefer larger frame size == MJPEG (compressed, varies)
-                        // YUYV for 640x480 is exactly 614400 bytes;
-                        // MJPEG for 640x480 is typically 40000-200000 bytes.
-                        // We want the *smallest non-zero* dwMaxVideoFrameSize that
-                        // is still plausibly MJPEG (< 400000), as that indicates
-                        // actual variable-length compression.
                         if sz > 0 && sz < 400_000 && sz > best_frame_size {
                             best_frame_size  = sz;
                             best_format_idx  = accepted_fmt;
@@ -661,7 +857,6 @@ pub fn run_webcam() -> Result<()> {
         );
         actual_frame_size = best_frame_size;
 
-        // ── Final Probe/Commit with chosen format ────────────────────────────
         let mut final_probe = probe_data.clone();
         final_probe[2] = best_format_idx;
         final_probe[3] = best_frame_idx;
@@ -670,8 +865,8 @@ pub fn run_webcam() -> Result<()> {
             TransferType::Control,
             TransferSetup {
                 bm_request_type: 0x21,
-                b_request: 0x01,   // SET_CUR
-                w_value:   0x0100, // VS_PROBE_CONTROL
+                b_request: 0x01,
+                w_value:   0x0100,
                 w_index:   iface_num as u16,
             },
             final_probe.len() as u32,
@@ -684,8 +879,8 @@ pub fn run_webcam() -> Result<()> {
             TransferType::Control,
             TransferSetup {
                 bm_request_type: 0x21,
-                b_request: 0x01,   // SET_CUR
-                w_value:   0x0200, // VS_COMMIT_CONTROL
+                b_request: 0x01,
+                w_value:   0x0200,
                 w_index:   iface_num as u16,
             },
             final_probe.len() as u32,
@@ -723,7 +918,7 @@ pub fn run_webcam() -> Result<()> {
     let mut frame_buffer:  Vec<u8> = Vec::new();
     let mut frame_count:   u32     = 0;
     let mut last_fid:      u8      = 0;
-    let mut frame_started: bool;
+    let mut frame_started: bool    = false;
 
     println!("\nInteractive mode: press ENTER to capture a frame, or type EXIT to quit.");
 
@@ -762,99 +957,348 @@ pub fn run_webcam() -> Result<()> {
 
             let flat_data = iso_result.data;
             let packets   = iso_result.packets;
-            let mut offset = 0usize;
 
-            for (i, pkt) in packets.iter().enumerate() {
-                let actual_len = pkt.actual_length as usize;
+            let lengths: Vec<usize> = packets.iter().map(|p| p.actual_length as usize).collect();
 
-                if actual_len == 0 {
-                    offset += packet_stride as usize;
-                    continue;
+            let done = process_iso_buffer(
+                &flat_data,
+                &lengths,
+                packet_stride as usize,
+                &mut frame_buffer,
+                &mut frame_count,
+                &mut frame_started,
+                &mut last_fid,
+                actual_frame_size,
+                min_frame_size,
+                captured_before,
+            );
+            if done {
+                continue 'outer;
+            }
+        }
+
+        eprintln!("Warning: no complete frame received after 2000 transfers, try again.");
+    }
+
+    if !frame_buffer.is_empty() {
+        println!("[DIAG] Flushing partial frame buffer ({} bytes)", frame_buffer.len());
+        let complete_frame = std::mem::take(&mut frame_buffer);
+        emit_frame(&complete_frame, &mut frame_count, actual_frame_size, min_frame_size);
+    }
+
+    println!("\nTotal frames captured: {}", frame_count);
+
+    handle.release_interface(iface_num).ok();
+    Ok(())
+}
+
+// ── Main entry point (native) ─────────────────────────────────────────────────
+
+#[cfg(not(target_family = "wasm"))]
+pub fn run_webcam() -> Result<()> {
+    use std::time::Duration;
+    use libusb1_sys::*;
+
+    println!("Starting UVC webcam capture (native / libusb)...");
+
+    let ctx = rusb::GlobalContext::default();
+
+    // ── Find UVC device ───────────────────────────────────────────────────────
+    let devices = ctx.devices().context("Failed to list USB devices")?;
+
+    let mut found_device: Option<rusb::Device<rusb::GlobalContext>> = None;
+    for device in devices.iter() {
+        let desc = match device.device_descriptor() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        if desc.class_code() == USB_CLASS_VIDEO || desc.class_code() == 0xEF {
+            println!(
+                "Found UVC device: {:04x}:{:04x} at bus {} address {}",
+                desc.vendor_id(), desc.product_id(),
+                device.bus_number(), device.address()
+            );
+            found_device = Some(device);
+            break;
+        }
+    }
+
+    let device = found_device.ok_or_else(|| anyhow!("No UVC device found (class 0x0E or 0xEF)"))?;
+
+    let (iface_num, alt_setting, ep_addr, max_packet_size) =
+        find_best_streaming_interface_native(&device)?;
+
+    println!(
+        "Selected interface {}, alt setting {}, endpoint 0x{:02x}, max packet size {} bytes",
+        iface_num, alt_setting, ep_addr, max_packet_size
+    );
+
+    let handle = device.open().context("Failed to open device")?;
+
+    // Detach kernel driver if active (Linux; no-op on macOS)
+    handle.set_auto_detach_kernel_driver(true).ok();
+    handle.claim_interface(iface_num).context("Failed to claim interface")?;
+
+    // ── UVC Processing Unit: enable auto white balance ────────────────────────
+    {
+        let pu_controls: &[(u8, u16, &str)] = &[
+            (1, 0x0B, "PU_WHITE_BALANCE_TEMPERATURE_AUTO"),
+            (1, 0x0D, "PU_WHITE_BALANCE_COMPONENT_AUTO"),
+            (1, 0x10, "PU_HUE_AUTO"),
+        ];
+        let pu_unit: u16  = 2;
+        let vc_iface: u16 = 0;
+        let timeout = Duration::from_millis(500);
+
+        println!("Initializing Processing Unit (auto white balance / hue)...");
+        for &(value, cs, name) in pu_controls {
+            let w_value = cs << 8;
+            let w_index = (pu_unit << 8) | vc_iface;
+            let mut info_buf = [0u8; 1];
+            match handle.read_control(0xA1, 0x86, w_value, w_index, &mut info_buf, timeout) {
+                Ok(_) if info_buf[0] & 0x04 != 0 => {
+                    match handle.write_control(0x21, 0x01, w_value, w_index, &[value], timeout) {
+                        Ok(_)  => println!("  {} = {} OK", name, value),
+                        Err(e) => println!("  {} failed: {:?}", name, e),
+                    }
                 }
+                Ok(_)  => println!("  {} not writable (caps=0x{:02x})", name, info_buf[0]),
+                Err(_) => println!("  {} not supported", name),
+            }
+        }
+    }
 
-                let pkt_data = &flat_data[offset..offset + actual_len];
-                offset += packet_stride as usize;
+    // ── Set alt setting ───────────────────────────────────────────────────────
+    println!("Resetting interface to alt setting 0...");
+    handle.set_alternate_setting(iface_num, 0).ok();
+    handle.set_alternate_setting(iface_num, alt_setting)
+        .context("Failed to set alt setting")?;
+    println!("Set alt setting {}", alt_setting);
 
-                let (hdr_len, is_eof) = parse_payload_header(pkt_data);
-                if hdr_len == 0 {
-                    continue;
+    // ── UVC Probe/Commit handshake ────────────────────────────────────────────
+    println!("Performing UVC Probe/Commit handshake...");
+
+    let timeout2s = Duration::from_millis(2000);
+    let timeout1s = Duration::from_millis(1000);
+
+    let mut probe_data = vec![0u8; 26];
+    let n = handle.read_control(0xA1, 0x81, 0x0100, iface_num as u16, &mut probe_data, timeout2s)
+        .context("Probe GET_CUR failed")?;
+    println!("  Probe GET_CUR: {} bytes received", n);
+
+    let mut actual_frame_size = 0u32;
+
+    if n >= 26 {
+        actual_frame_size = u32::from_le_bytes(probe_data[18..22].try_into().unwrap());
+        let cur_format = probe_data[2];
+        let cur_frame  = probe_data[3];
+        println!(
+            "  Default format index: {}, frame index: {}, frame interval: {} (100 ns units)",
+            cur_format, cur_frame,
+            u32::from_le_bytes(probe_data[4..8].try_into().unwrap())
+        );
+        println!("  dwMaxVideoFrameSize: {} bytes", actual_frame_size);
+
+        for (req_code, req_name) in [(0x82u8, "GET_MIN"), (0x83u8, "GET_MAX")] {
+            let mut d = vec![0u8; 26];
+            if let Ok(m) = handle.read_control(0xA1, req_code, 0x0100, iface_num as u16, &mut d, timeout1s) {
+                if m >= 4 {
+                    println!("  {}: format={} frame={}", req_name, d[2], d[3]);
                 }
+            }
+        }
 
-                if frame_count == captured_before && i < 2 {
+        let mut best_format_idx = cur_format;
+        let mut best_frame_idx  = cur_frame;
+        let mut best_frame_size = actual_frame_size;
+
+        for fmt_idx in 1u8..=4 {
+            let mut probe_try = probe_data.clone();
+            probe_try[2] = fmt_idx;
+            probe_try[3] = 1;
+
+            let _ = handle.write_control(0x21, 0x01, 0x0100, iface_num as u16, &probe_try, timeout1s);
+
+            let mut d = vec![0u8; 26];
+            if let Ok(m) = handle.read_control(0xA1, 0x81, 0x0100, iface_num as u16, &mut d, timeout1s) {
+                if m >= 22 {
+                    let sz = u32::from_le_bytes(d[18..22].try_into().unwrap());
+                    let accepted_fmt = d[2];
+                    let accepted_frm = d[3];
                     println!(
-                        "[DIAG] packet {}: HLE=0x{:02x} BFH=0b{:08b} length={}",
-                        i, pkt_data[0], pkt_data[1], actual_len
+                        "  Format probe {}: camera accepted fmt={} frame={} maxSize={} bytes",
+                        fmt_idx, accepted_fmt, accepted_frm, sz
                     );
-                }
-
-                let fid     = pkt_data[1] & 0x01;
-                let payload = if hdr_len < pkt_data.len() { &pkt_data[hdr_len..] } else { &[][..] };
-
-                let fid_toggle = !frame_buffer.is_empty() && fid != last_fid;
-
-                if fid_toggle {
-                    if frame_started {
-                        println!(
-                            "[DIAG] FID toggle -> emitting frame #{} ({} bytes)",
-                            frame_count + 1, frame_buffer.len()
-                        );
-                        let complete_frame = std::mem::take(&mut frame_buffer);
-                        emit_frame(&complete_frame, &mut frame_count, actual_frame_size, min_frame_size);
-                    } else {
-                        println!("[DIAG] FID toggle, no SOI seen yet — discarding {} bytes", frame_buffer.len());
-                        frame_buffer.clear();
-                    }
-
-                    if payload.starts_with(&[0xff, 0xd8]) {
-                        frame_buffer.extend_from_slice(payload);
-                        frame_started = true;
-                    } else {
-                        frame_started = false;
-                        println!(
-                            "[DIAG] FID toggle payload does not start with SOI \
-                             (0x{:02x} 0x{:02x}) — waiting",
-                            payload.first().copied().unwrap_or(0),
-                            payload.get(1).copied().unwrap_or(0)
-                        );
-                    }
-
-                    if frame_count > captured_before {
-                        last_fid = fid;
-                        continue 'outer;
-                    }
-                } else {
-                    if !frame_started {
-                        if let Some(soi_pos) = payload.windows(2).position(|w| w == [0xff, 0xd8]) {
-                            frame_buffer.extend_from_slice(&payload[soi_pos..]);
-                            frame_started = true;
-                            println!("[DIAG] SOI found at offset {} in payload — accumulation started", soi_pos);
-                        }
-                    } else {
-                        frame_buffer.extend_from_slice(payload);
-                    }
-
-                    if frame_started {
-                        let mjpeg_complete = frame_buffer.starts_with(&[0xff, 0xd8])
-                            && frame_buffer.ends_with(&[0xff, 0xd9]);
-
-                        if (is_eof || mjpeg_complete) && !frame_buffer.is_empty() {
-                            println!(
-                                "[DIAG] frame #{} complete (eof_bit={}, mjpeg_eoi={}, {} bytes)",
-                                frame_count + 1, is_eof, mjpeg_complete, frame_buffer.len()
-                            );
-                            let complete_frame = std::mem::take(&mut frame_buffer);
-                            frame_started = false;
-                            emit_frame(&complete_frame, &mut frame_count, actual_frame_size, min_frame_size);
-
-                            if frame_count > captured_before {
-                                last_fid = fid;
-                                continue 'outer;
-                            }
-                        }
+                    if sz > 0 && sz < 400_000 && sz > best_frame_size {
+                        best_frame_size = sz;
+                        best_format_idx = accepted_fmt;
+                        best_frame_idx  = accepted_frm;
                     }
                 }
+            }
+        }
 
-                last_fid = fid;
+        println!(
+            "  Selected: format={} frame={} maxSize={} bytes",
+            best_format_idx, best_frame_idx, best_frame_size
+        );
+        actual_frame_size = best_frame_size;
+
+        let mut final_probe = probe_data.clone();
+        final_probe[2] = best_format_idx;
+        final_probe[3] = best_frame_idx;
+
+        handle.write_control(0x21, 0x01, 0x0100, iface_num as u16, &final_probe, timeout2s)
+            .context("Probe SET_CUR failed")?;
+        handle.write_control(0x21, 0x01, 0x0200, iface_num as u16, &final_probe, timeout2s)
+            .context("Commit SET_CUR failed")?;
+
+        println!("Handshake complete");
+    }
+
+    // ── Isochronous transfer setup ────────────────────────────────────────────
+
+    let num_packets:   u32 = 32;
+    let packet_stride: u32 = max_packet_size as u32;
+    let buffer_size:   u32 = num_packets * packet_stride;
+    let min_frame_size: usize = 28_800;
+
+    println!(
+        "Transfer buffer: {} packets x {} bytes = {} KB",
+        num_packets, packet_stride, buffer_size / 1024
+    );
+    println!("Minimum frame size: {} bytes", min_frame_size);
+
+    // ── Interactive capture loop ──────────────────────────────────────────────
+
+    let mut frame_buffer:  Vec<u8> = Vec::new();
+    let mut frame_count:   u32     = 0;
+    let mut last_fid:      u8      = 0;
+    let mut frame_started: bool;
+
+    println!("\nInteractive mode: press ENTER to capture a frame, or type EXIT to quit.");
+
+    let stdin = io::stdin();
+
+    // We need the raw libusb handle for isochronous transfers.
+    // Safety: we own the DeviceHandle and won't close it while `raw` is live.
+    let raw_handle = handle.as_raw();
+
+    'outer: loop {
+        print!("Press ENTER for frame #{} (or EXIT): ", frame_count + 1);
+        io::stdout().flush().ok();
+
+        let mut input = String::new();
+        if stdin.lock().read_line(&mut input).is_err() {
+            break;
+        }
+        if input.trim().eq_ignore_ascii_case("exit") {
+            println!("Exiting.");
+            break;
+        }
+
+        println!("Capturing...");
+        frame_buffer.clear();
+        frame_started = false;
+        let captured_before = frame_count;
+
+        for _attempt in 0..2000 {
+            // Allocate isochronous transfer with `num_packets` packets.
+            // Safety: libusb_alloc_transfer / libusb_free_transfer pair.
+            let xfer = unsafe { libusb_alloc_transfer(num_packets as i32) };
+            if xfer.is_null() {
+                return Err(anyhow!("libusb_alloc_transfer returned NULL"));
+            }
+
+            // Allocate data buffer: packet_stride bytes per packet.
+            let buf_len = buffer_size as usize;
+            let mut buf = vec![0u8; buf_len];
+
+            // We use a simple synchronous trick: submit transfer, then poll
+            // libusb_handle_events until the transfer completes (signalled via
+            // a flag in user_data). This avoids pulling in a full async runtime.
+            let completed = Box::new(std::sync::atomic::AtomicBool::new(false));
+            let completed_ptr = &*completed as *const std::sync::atomic::AtomicBool;
+
+            extern "system" fn iso_callback(transfer: *mut libusb1_sys::libusb_transfer) {
+                unsafe {
+                    let flag = (*transfer).user_data as *const std::sync::atomic::AtomicBool;
+                    (*flag).store(true, std::sync::atomic::Ordering::Release);
+                }
+            }
+
+            unsafe {
+                libusb1_sys::libusb_fill_iso_transfer(
+                    xfer,
+                    raw_handle,
+                    ep_addr,
+                    buf.as_mut_ptr(),
+                    buf_len as i32,
+                    num_packets as i32,
+                    iso_callback,
+                    completed_ptr as *mut libc::c_void,
+                    2000, // timeout ms
+                );
+                // Set packet lengths uniformly.
+                libusb1_sys::libusb_set_iso_packet_lengths(xfer, packet_stride);
+            }
+
+            let submit_err = unsafe { libusb1_sys::libusb_submit_transfer(xfer) };
+            if submit_err != 0 {
+                unsafe { libusb_free_transfer(xfer) };
+                return Err(anyhow!("libusb_submit_transfer failed: {}", submit_err));
+            }
+
+            // Poll until the callback fires.
+            let ctx_ptr = unsafe { libusb1_sys::libusb_get_device(raw_handle) };
+            let ctx_ptr = unsafe { libusb1_sys::libusb_get_parent(ctx_ptr) };
+            // Actually we need the libusb_context pointer, get it from rusb:
+            let libusb_ctx = {
+                // rusb::GlobalContext has no public ptr accessor, but its
+                // handle_events approach works via the default context.
+                // Use libusb_get_context (available in libusb >= 1.0.24).
+                // Fallback: use null → libusb uses the default context.
+                let _ = ctx_ptr; // suppress unused warning
+                std::ptr::null_mut::<libusb1_sys::libusb_context>()
+            };
+
+            let deadline = std::time::Instant::now() + Duration::from_millis(2500);
+            loop {
+                if completed.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+                if std::time::Instant::now() > deadline {
+                    unsafe { libusb1_sys::libusb_cancel_transfer(xfer) };
+                    break;
+                }
+                let mut tv = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
+                unsafe { libusb1_sys::libusb_handle_events_timeout(libusb_ctx, &mut tv) };
+            }
+
+            // Extract packet information and data.
+            let flat_data = buf.clone();
+            let mut lengths = Vec::with_capacity(num_packets as usize);
+            for i in 0..num_packets as usize {
+                let pkt = unsafe { (*xfer).iso_packet_desc.as_ptr().add(i) };
+                lengths.push(unsafe { (*pkt).actual_length as usize });
+            }
+
+            unsafe { libusb_free_transfer(xfer) };
+
+            let done = process_iso_buffer(
+                &flat_data,
+                &lengths,
+                packet_stride as usize,
+                &mut frame_buffer,
+                &mut frame_count,
+                &mut frame_started,
+                &mut last_fid,
+                actual_frame_size,
+                min_frame_size,
+                captured_before,
+            );
+            if done {
+                continue 'outer;
             }
         }
 

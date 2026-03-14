@@ -1,12 +1,12 @@
 use wasmtime_wasi::WasiView;
-use crate::wadu436::usb::descriptors::ConfigurationDescriptor;
-use crate::wadu436::usb::descriptors::DeviceDescriptor;
-use crate::wadu436::usb::device::DeviceLocation;
+use crate::component::usb::descriptors::ConfigurationDescriptor;
+use crate::component::usb::descriptors::DeviceDescriptor;
+use crate::component::usb::device::DeviceLocation;
 
 // Traits
-use crate::wadu436::usb::device::HostUsbDevice;
-use crate::wadu436::usb::device::HostDeviceHandle;
-use crate::wadu436::usb::transfers::HostTransfer;
+use crate::component::usb::device::HostUsbDevice;
+use crate::component::usb::device::HostDeviceHandle;
+use crate::component::usb::transfers::HostTransfer;
 
 // Types from interfaces (mapped ones)
 // We use the local types for the resources in the table, but the bindgen-generated 
@@ -16,31 +16,31 @@ use crate::wadu436::usb::transfers::HostTransfer;
 // Transfer -> crate::Transfer
 
 impl<T: WasiView> HostUsbDevice for T {
-    fn open(&mut self, rep: wasmtime::component::Resource<crate::UsbDevice>) -> wasmtime::Result<Result<wasmtime::component::Resource<crate::DeviceHandle>, crate::wadu436::usb::errors::LibusbError>> {
+    fn open(&mut self, rep: wasmtime::component::Resource<crate::UsbDevice>) -> wasmtime::Result<Result<wasmtime::component::Resource<crate::DeviceHandle>, crate::component::usb::errors::LibusbError>> {
         let device = self.table().get(&rep)?;
         match device.open() {
             Ok(handle) => Ok(Ok(self.table().push(handle)?)),
-            Err(_) => Ok(Err(crate::wadu436::usb::errors::LibusbError::Other)),
+            Err(_) => Ok(Err(crate::component::usb::errors::LibusbError::Other)),
         }
     }
 
-    fn get_configuration_descriptor(&mut self, rep: wasmtime::component::Resource<crate::UsbDevice>, index: u8) -> wasmtime::Result<Result<ConfigurationDescriptor, crate::wadu436::usb::errors::LibusbError>> {
+    fn get_configuration_descriptor(&mut self, rep: wasmtime::component::Resource<crate::UsbDevice>, index: u8) -> wasmtime::Result<Result<ConfigurationDescriptor, crate::component::usb::errors::LibusbError>> {
         let device = self.table().get(&rep)?;
         match device.get_configuration_descriptor(index) {
             Ok(desc) => Ok(Ok(desc)),
-            Err(_) => Ok(Err(crate::wadu436::usb::errors::LibusbError::Other)),
+            Err(_) => Ok(Err(crate::component::usb::errors::LibusbError::Other)),
         }
     }
 
-    fn get_configuration_descriptor_by_value(&mut self, _rep: wasmtime::component::Resource<crate::UsbDevice>, _value: u8) -> wasmtime::Result<Result<ConfigurationDescriptor, crate::wadu436::usb::errors::LibusbError>> {
-        Ok(Err(crate::wadu436::usb::errors::LibusbError::NotSupported))
+    fn get_configuration_descriptor_by_value(&mut self, _rep: wasmtime::component::Resource<crate::UsbDevice>, _value: u8) -> wasmtime::Result<Result<ConfigurationDescriptor, crate::component::usb::errors::LibusbError>> {
+        Ok(Err(crate::component::usb::errors::LibusbError::NotSupported))
     }
 
-    fn get_active_configuration_descriptor(&mut self, rep: wasmtime::component::Resource<crate::UsbDevice>) -> wasmtime::Result<Result<ConfigurationDescriptor, crate::wadu436::usb::errors::LibusbError>> {
+    fn get_active_configuration_descriptor(&mut self, rep: wasmtime::component::Resource<crate::UsbDevice>) -> wasmtime::Result<Result<ConfigurationDescriptor, crate::component::usb::errors::LibusbError>> {
         let device = self.table().get(&rep)?;
         match device.active_configuration_descriptor() {
             Ok(desc) => Ok(Ok(desc)),
-            Err(_) => Ok(Err(crate::wadu436::usb::errors::LibusbError::Other)),
+            Err(_) => Ok(Err(crate::component::usb::errors::LibusbError::Other)),
         }
     }
 
@@ -51,7 +51,7 @@ impl<T: WasiView> HostUsbDevice for T {
 }
 
 impl<T: WasiView> HostDeviceHandle for T {
-    fn get_configuration(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>) -> wasmtime::Result<Result<u8, crate::wadu436::usb::errors::LibusbError>> {
+    fn get_configuration(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>) -> wasmtime::Result<Result<u8, crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         match handle.get_configuration() {
             Ok(v) => Ok(Ok(v)),
@@ -59,19 +59,19 @@ impl<T: WasiView> HostDeviceHandle for T {
         }
     }
 
-    fn set_configuration(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, config: crate::wadu436::usb::configuration::ConfigValue) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn set_configuration(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, config: crate::component::usb::configuration::ConfigValue) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         let val = match config {
-            crate::wadu436::usb::configuration::ConfigValue::Unconfigured => 0,
-            crate::wadu436::usb::configuration::ConfigValue::Value(v) => v,
+            crate::component::usb::configuration::ConfigValue::Unconfigured => 0,
+            crate::component::usb::configuration::ConfigValue::Value(v) => v,
         };
         match handle.set_configuration(val) {
             Ok(()) => Ok(Ok(())),
-            Err(_) => Ok(Err(crate::wadu436::usb::errors::LibusbError::Other)),
+            Err(_) => Ok(Err(crate::component::usb::errors::LibusbError::Other)),
         }
     }
 
-    fn claim_interface(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, ifac: u8) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn claim_interface(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, ifac: u8) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         match handle.claim_interface(ifac) {
             Ok(()) => Ok(Ok(())),
@@ -82,15 +82,15 @@ impl<T: WasiView> HostDeviceHandle for T {
         }
     }
 
-    fn release_interface(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, ifac: u8) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn release_interface(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, ifac: u8) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         match handle.release_interface(ifac) {
             Ok(()) => Ok(Ok(())),
-            Err(_) => Ok(Err(crate::wadu436::usb::errors::LibusbError::Other)),
+            Err(_) => Ok(Err(crate::component::usb::errors::LibusbError::Other)),
         }
     }
 
-    fn set_interface_altsetting(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, iface: u8, alt: u8) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn set_interface_altsetting(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, iface: u8, alt: u8) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         println!("[HOST] set_interface_altsetting(iface={}, alt={})", iface, alt);
         match handle.set_interface_altsetting(iface, alt) {
@@ -102,7 +102,7 @@ impl<T: WasiView> HostDeviceHandle for T {
         }
     }
 
-    fn clear_halt(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, endpoint: u8) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn clear_halt(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, endpoint: u8) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         match handle.clear_halt(endpoint) {
             Ok(()) => Ok(Ok(())),
@@ -110,35 +110,35 @@ impl<T: WasiView> HostDeviceHandle for T {
         }
     }
 
-    fn reset_device(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn reset_device(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         match handle.reset() {
             Ok(()) => Ok(Ok(())),
-            Err(_) => Ok(Err(crate::wadu436::usb::errors::LibusbError::Other)),
+            Err(_) => Ok(Err(crate::component::usb::errors::LibusbError::Other)),
         }
     }
 
-    fn alloc_streams(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _num_streams: u32, _endpoints: Vec<u8>) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
-        Ok(Err(crate::wadu436::usb::errors::LibusbError::NotSupported))
+    fn alloc_streams(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _num_streams: u32, _endpoints: Vec<u8>) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
+        Ok(Err(crate::component::usb::errors::LibusbError::NotSupported))
     }
 
-    fn free_streams(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _endpoints: Vec<u8>) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
-        Ok(Err(crate::wadu436::usb::errors::LibusbError::NotSupported))
+    fn free_streams(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _endpoints: Vec<u8>) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
+        Ok(Err(crate::component::usb::errors::LibusbError::NotSupported))
     }
 
-    fn kernel_driver_active(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _ifac: u8) -> wasmtime::Result<Result<bool, crate::wadu436::usb::errors::LibusbError>> {
-        Ok(Err(crate::wadu436::usb::errors::LibusbError::NotSupported))
+    fn kernel_driver_active(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _ifac: u8) -> wasmtime::Result<Result<bool, crate::component::usb::errors::LibusbError>> {
+        Ok(Err(crate::component::usb::errors::LibusbError::NotSupported))
     }
 
-    fn detach_kernel_driver(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _ifac: u8) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
-        Ok(Err(crate::wadu436::usb::errors::LibusbError::NotSupported))
+    fn detach_kernel_driver(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _ifac: u8) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
+        Ok(Err(crate::component::usb::errors::LibusbError::NotSupported))
     }
 
-    fn attach_kernel_driver(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _ifac: u8) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
-        Ok(Err(crate::wadu436::usb::errors::LibusbError::NotSupported))
+    fn attach_kernel_driver(&mut self, _rep: wasmtime::component::Resource<crate::DeviceHandle>, _ifac: u8) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
+        Ok(Err(crate::component::usb::errors::LibusbError::NotSupported))
     }
 
-    fn new_transfer(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, xfer_type: crate::wadu436::usb::transfers::TransferType, setup: crate::wadu436::usb::transfers::TransferSetup, buf_size: u32, opts: crate::wadu436::usb::transfers::TransferOptions) -> wasmtime::Result<Result<wasmtime::component::Resource<crate::Transfer>, crate::wadu436::usb::errors::LibusbError>> {
+    fn new_transfer(&mut self, rep: wasmtime::component::Resource<crate::DeviceHandle>, xfer_type: crate::component::usb::transfers::TransferType, setup: crate::component::usb::transfers::TransferSetup, buf_size: u32, opts: crate::component::usb::transfers::TransferOptions) -> wasmtime::Result<Result<wasmtime::component::Resource<crate::Transfer>, crate::component::usb::errors::LibusbError>> {
         let handle = self.table().get_mut(&rep)?;
         match crate::Transfer::new(handle, xfer_type, setup, buf_size, &opts) {
             Ok(xfer) => Ok(Ok(self.table().push(xfer)?)),
@@ -158,7 +158,7 @@ impl<T: WasiView> HostDeviceHandle for T {
 }
 
 impl<T: WasiView> HostTransfer for T {
-    fn submit_transfer(&mut self, rep: wasmtime::component::Resource<crate::Transfer>, data: Vec<u8>) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn submit_transfer(&mut self, rep: wasmtime::component::Resource<crate::Transfer>, data: Vec<u8>) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let xfer = self.table().get_mut(&rep)?;
         match xfer.submit(&data) {
             Ok(()) => Ok(Ok(())),
@@ -166,7 +166,7 @@ impl<T: WasiView> HostTransfer for T {
         }
     }
 
-    fn cancel_transfer(&mut self, rep: wasmtime::component::Resource<crate::Transfer>) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+    fn cancel_transfer(&mut self, rep: wasmtime::component::Resource<crate::Transfer>) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         let xfer = self.table().get_mut(&rep)?;
         match xfer.cancel() {
             Ok(()) => Ok(Ok(())),
@@ -180,8 +180,8 @@ impl<T: WasiView> HostTransfer for T {
     }
 }
 
-impl<T: WasiView> crate::wadu436::usb::transfers::Host for T {
-    fn await_transfer(&mut self, xfer: wasmtime::component::Resource<crate::Transfer>) -> wasmtime::Result<Result<Vec<u8>, crate::wadu436::usb::errors::LibusbError>> {
+impl<T: WasiView> crate::component::usb::transfers::Host for T {
+    fn await_transfer(&mut self, xfer: wasmtime::component::Resource<crate::Transfer>) -> wasmtime::Result<Result<Vec<u8>, crate::component::usb::errors::LibusbError>> {
         let mut xfer = self.table().delete(xfer)?;
         match xfer.await_completion() {
             Ok(data) => Ok(Ok(data)),
@@ -189,7 +189,7 @@ impl<T: WasiView> crate::wadu436::usb::transfers::Host for T {
         }
     }
 
-    fn await_iso_transfer(&mut self, xfer: wasmtime::component::Resource<crate::Transfer>) -> wasmtime::Result<Result<crate::wadu436::usb::transfers::IsoResult, crate::wadu436::usb::errors::LibusbError>> {
+    fn await_iso_transfer(&mut self, xfer: wasmtime::component::Resource<crate::Transfer>) -> wasmtime::Result<Result<crate::component::usb::transfers::IsoResult, crate::component::usb::errors::LibusbError>> {
         let mut xfer = self.table().delete(xfer)?;
         match xfer.await_iso_completion() {
             Ok(res) => Ok(Ok(res)),
@@ -198,12 +198,12 @@ impl<T: WasiView> crate::wadu436::usb::transfers::Host for T {
     }
 }
 
-impl<T: WasiView> crate::wadu436::usb::device::Host for T {
-    fn init(&mut self) -> wasmtime::Result<Result<(), crate::wadu436::usb::errors::LibusbError>> {
+impl<T: WasiView> crate::component::usb::device::Host for T {
+    fn init(&mut self) -> wasmtime::Result<Result<(), crate::component::usb::errors::LibusbError>> {
         Ok(Ok(()))
     }
 
-    fn list_devices(&mut self) -> wasmtime::Result<Result<Vec<(wasmtime::component::Resource<crate::UsbDevice>, DeviceDescriptor, DeviceLocation)>, crate::wadu436::usb::errors::LibusbError>> {
+    fn list_devices(&mut self) -> wasmtime::Result<Result<Vec<(wasmtime::component::Resource<crate::UsbDevice>, DeviceDescriptor, DeviceLocation)>, crate::component::usb::errors::LibusbError>> {
         let table = self.table();
         println!("[HOST] listing devices...");
         match crate::UsbDevice::enumerate() {
@@ -219,7 +219,7 @@ impl<T: WasiView> crate::wadu436::usb::device::Host for T {
             }
             Err(e) => {
                 println!("[HOST] error listing devices: {:?}", e);
-                Ok(Err(crate::wadu436::usb::errors::LibusbError::Other))
+                Ok(Err(crate::component::usb::errors::LibusbError::Other))
             }
         }
     }

@@ -1,22 +1,21 @@
 wasmtime::component::bindgen!({
-    world: "imports",
-    path: "../wit/deps/usb",
+    world: "host",
+    path: "usb.wit",
 
     with: {
-        "wadu436:usb/device/usb-device": UsbDevice,
-        "wadu436:usb/device/device-handle": DeviceHandle,
-        "wadu436:usb/transfers/transfer": Transfer,
+        "component:usb/device/usb-device": UsbDevice,
+        "component:usb/device/device-handle": DeviceHandle,
+        "component:usb/transfers/transfer": Transfer,
     }
 });
 
 use error::UsbWasmError;
 use rusb::{
-    constants::LIBUSB_TRANSFER_TYPE_ISOCHRONOUS,
     ffi::{libusb_alloc_transfer, libusb_handle_events_completed, libusb_submit_transfer},
-    GlobalContext, Recipient, RequestType, Speed, UsbContext,
+    GlobalContext, Recipient, RequestType, UsbContext,
 };
-use std::{error::Error, sync::Arc, time::Duration};
-use wadu436::usb;
+use std::{sync::Arc, time::Duration};
+use component::usb;
 
 use wasmtime_wasi::WasiView;
 
@@ -437,7 +436,7 @@ impl Drop for Transfer {
 pub fn add_to_linker<T: WasiView>(
     linker: &mut wasmtime::component::Linker<T>,
 ) -> wasmtime::Result<()> {
-    wadu436::usb::device::add_to_linker(linker, |s| s)?;
-    wadu436::usb::transfers::add_to_linker(linker, |s| s)
+    component::usb::device::add_to_linker(linker, |s| s)?;
+    component::usb::transfers::add_to_linker(linker, |s| s)
 }
 

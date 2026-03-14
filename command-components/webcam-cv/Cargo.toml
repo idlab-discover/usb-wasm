@@ -6,10 +6,17 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 log = "0.4"
-usb-wasm-bindings = { workspace = true }
-wit-bindgen = "0.36.0"
 image = { version = "0.24.7", default-features = false, features = ["jpeg", "png"] }
 jpeg-decoder = "0.3"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+usb-wasm-bindings = { workspace = true }
+wit-bindgen = "0.36.0"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+rusb = { path = "../../rusb-wasi" }
+libusb1-sys = { path = "../../rusb-wasi/libusb1-sys" }
+libc = "0.2"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
