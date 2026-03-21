@@ -11,7 +11,7 @@ jpeg-decoder = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 usb-wasm-bindings = { workspace = true }
-wit-bindgen = "0.36.0"
+wit-bindgen = "0.42.1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rusb = { path = "../../rusb-wasi" }

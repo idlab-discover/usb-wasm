@@ -7,6 +7,7 @@ world host {
     import descriptors;
     import configuration;
     import usb-hotplug;
+    import cv;
 
     export transfers;
     export errors;
@@ -14,6 +15,7 @@ world host {
     export descriptors;
     export configuration;
     export usb-hotplug;
+    export cv;
 }
 
 world guest {
@@ -26,12 +28,17 @@ world guest {
 }
 
 world cguest {
+    import wasi:cli/environment@0.2.0;
+    import wasi:cli/stdout@0.2.0;
+    import wasi:cli/stderr@0.2.0;
     import transfers;
     import errors;
     import device;
     import descriptors;
     import configuration;
     import usb-hotplug;
+    import cv;
 
     export wasi:cli/run@0.2.0;
+    export cv;
 }

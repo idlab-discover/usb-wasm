@@ -625,6 +625,245 @@ pub fn run_webcam() -> Result<()> {
     Ok(())
 }
 
+// ── CV Interface Implementation ──────────────────────────────────────────────
+
+#[cfg(target_family = "wasm")]
+use crate::bindings::exports::component::usb::cv::{GuestFrameStream, GuestObjectDetector, Frame, Detection};
+
+pub struct WebcamFrameStream {
+    #[cfg(target_family = "wasm")]
+    handle: usb_wasm_bindings::component::usb::device::DeviceHandle,
+    iface_num: u8,
+    ep_addr: u8,
+    max_packet_size: u16,
+    actual_frame_size: u32,
+    min_frame_size: usize,
+    packet_stride: u32,
+    num_packets: u32,
+    buffer_size: u32,
+    #[cfg(target_family = "wasm")]
+    opts: usb_wasm_bindings::component::usb::transfers::TransferOptions,
+    
+    // Mutable state
+    frame_count: std::cell::Cell<u32>,
+    last_fid: std::cell::Cell<u8>,
+    frame_buffer: std::cell::RefCell<Vec<u8>>,
+    frame_started: std::cell::Cell<bool>,
+}
+
+#[cfg(target_family = "wasm")]
+impl GuestFrameStream for WebcamFrameStream {
+    fn read_frame(&self) -> Result<Frame, String> {
+        let mut frame_buffer = self.frame_buffer.borrow_mut();
+        let mut frame_count = self.frame_count.get();
+        let mut frame_started = self.frame_started.get();
+        let mut last_fid = self.last_fid.get();
+        let captured_before = frame_count;
+
+        for _attempt in 0..2000 {
+            let xfer = self.handle.new_transfer(
+                TransferType::Isochronous, TransferSetup { bm_request_type: 0, b_request: 0, w_value: 0, w_index: 0 },
+                self.buffer_size, self.opts.clone(),
+            ).map_err(|e| format!("{:?}", e))?;
+
+            xfer.submit_transfer(&[]).map_err(|e| format!("{:?}", e))?;
+            let iso_result = await_iso_transfer(xfer).map_err(|e| format!("{:?}", e))?;
+            let lengths: Vec<usize> = iso_result.packets.iter().map(|p| p.actual_length as usize).collect();
+
+            // We use a simplified version of process_iso_buffer here to avoid emit_frame
+            let mut offset = 0usize;
+            for actual_len in lengths {
+                if actual_len == 0 {
+                    offset += self.packet_stride as usize;
+                    continue;
+                }
+
+                let pkt_data = &iso_result.data[offset..offset + actual_len];
+                offset += self.packet_stride as usize;
+
+                let (hdr_len, is_eof) = parse_payload_header(pkt_data);
+                if hdr_len == 0 { continue; }
+
+                let fid     = pkt_data[1] & 0x01;
+                let payload = if hdr_len < pkt_data.len() { &pkt_data[hdr_len..] } else { &[][..] };
+
+                let fid_toggle = !frame_buffer.is_empty() && fid != last_fid;
+
+                if fid_toggle {
+                    let complete_frame = std::mem::take(&mut *frame_buffer);
+                    
+                    if payload.starts_with(&[0xff, 0xd8]) {
+                        frame_buffer.extend_from_slice(payload);
+                        frame_started = true;
+                    } else {
+                        frame_started = true;
+                        frame_buffer.extend_from_slice(payload);
+                    }
+                    
+                    last_fid = fid;
+                    if !complete_frame.is_empty() && complete_frame.len() >= self.min_frame_size {
+                        frame_count += 1;
+                        self.frame_count.set(frame_count);
+                        self.frame_started.set(frame_started);
+                        self.last_fid.set(last_fid);
+                        
+                        let is_mjpeg = complete_frame.starts_with(&[0xff, 0xd8]);
+                        let (w, h) = if is_mjpeg {
+                            match decode_mjpeg(&complete_frame) {
+                                Ok(img) => (img.width(), img.height()),
+                                Err(_) => (0, 0),
+                            }
+                        } else {
+                            get_resolution(complete_frame.len(), self.actual_frame_size)
+                        };
+                        
+                        return Ok(Frame {
+                            data: complete_frame,
+                            width: w,
+                            height: h,
+                        });
+                    }
+                } else {
+                    if !frame_started {
+                        if let Some(soi_pos) = payload.windows(2).position(|w| w == [0xff, 0xd8]) {
+                            frame_buffer.extend_from_slice(&payload[soi_pos..]);
+                            frame_started = true;
+                        } else if !payload.is_empty() {
+                            frame_buffer.extend_from_slice(payload);
+                            frame_started = true;
+                        }
+                    } else {
+                        frame_buffer.extend_from_slice(payload);
+                    }
+
+                    if frame_started && is_eof && !frame_buffer.is_empty() {
+                        let complete_frame = std::mem::take(&mut *frame_buffer);
+                        frame_started = false;
+                        last_fid = fid;
+                        
+                        if complete_frame.len() >= self.min_frame_size {
+                            frame_count += 1;
+                            self.frame_count.set(frame_count);
+                            self.frame_started.set(frame_started);
+                            self.last_fid.set(last_fid);
+                            
+                            let is_mjpeg = complete_frame.starts_with(&[0xff, 0xd8]);
+                            let (w, h) = if is_mjpeg {
+                                match decode_mjpeg(&complete_frame) {
+                                    Ok(img) => (img.width(), img.height()),
+                                    Err(_) => (0, 0),
+                                }
+                            } else {
+                                get_resolution(complete_frame.len(), self.actual_frame_size)
+                            };
+                            
+                            return Ok(Frame {
+                                data: complete_frame,
+                                width: w,
+                                height: h,
+                            });
+                        }
+                    }
+                }
+                last_fid = fid;
+            }
+        }
+        Err("Timeout waiting for frame".to_string())
+    }
+}
+
+pub struct UnimplementedObjectDetector;
+
+#[cfg(target_family = "wasm")]
+impl GuestObjectDetector for UnimplementedObjectDetector {
+    fn detect(&self, _f: Frame) -> Result<Vec<Detection>, String> {
+        Err("Not implemented".to_string())
+    }
+}
+
+#[cfg(target_family = "wasm")]
+pub fn open_webcam_stream() -> Result<WebcamFrameStream, String> {
+    let devices = list_devices().map_err(|e| format!("{:?}", e))?;
+    let (device, _, _) = devices
+        .into_iter()
+        .find(|(_, desc, _)| desc.device_class == USB_CLASS_VIDEO || desc.device_class == 0xEF)
+        .ok_or_else(|| "No UVC device found".to_string())?;
+
+    let handle = device.open().map_err(|e| format!("{:?}", e))?;
+    let (iface_num, alt_setting, ep_addr, max_packet_size) = find_best_streaming_interface(&device).map_err(|e| e.to_string())?;
+
+    handle.claim_interface(iface_num).map_err(|e| format!("{:?}", e))?;
+    handle.set_interface_altsetting(iface_num, 0).ok();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // Handshake
+    let final_f_idx = 2; // MJPEG
+    let final_fr_idx = 1; // Default Frame
+    
+    let probe_get = handle.new_transfer(
+        TransferType::Control, TransferSetup { bm_request_type: 0xA1, b_request: 0x81, w_value: 0x0100, w_index: iface_num as u16 },
+        34, TransferOptions { endpoint: 0, timeout_ms: 2000, stream_id: 0, iso_packets: 0 },
+    ).map_err(|e| format!("{:?}", e))?;
+    probe_get.submit_transfer(&[]).ok();
+    
+    let mut baseline_probe = await_transfer(probe_get).unwrap_or(vec![0; 26]);
+    if baseline_probe.len() >= 4 {
+        baseline_probe[2] = final_f_idx;
+        baseline_probe[3] = final_fr_idx;
+    }
+
+    let probe_set = handle.new_transfer(
+        TransferType::Control, TransferSetup { bm_request_type: 0x21, b_request: 0x01, w_value: 0x0100, w_index: iface_num as u16 },
+        baseline_probe.len() as u32, TransferOptions { endpoint: 0, timeout_ms: 2000, stream_id: 0, iso_packets: 0 },
+    ).map_err(|e| format!("{:?}", e))?;
+    probe_set.submit_transfer(&baseline_probe).ok();
+    await_transfer(probe_set).ok();
+
+    let probe_get_again = handle.new_transfer(
+        TransferType::Control, TransferSetup { bm_request_type: 0xA1, b_request: 0x81, w_value: 0x0100, w_index: iface_num as u16 },
+        baseline_probe.len() as u32, TransferOptions { endpoint: 0, timeout_ms: 2000, stream_id: 0, iso_packets: 0 },
+    ).map_err(|e| format!("{:?}", e))?;
+    probe_get_again.submit_transfer(&[]).ok();
+    let negotiated_probe = await_transfer(probe_get_again).unwrap_or(baseline_probe.clone());
+
+    let actual_frame_size = if negotiated_probe.len() >= 22 {
+        u32::from_le_bytes(negotiated_probe[18..22].try_into().unwrap())
+    } else { 0 };
+
+    let commit_set = handle.new_transfer(
+        TransferType::Control, TransferSetup { bm_request_type: 0x21, b_request: 0x01, w_value: 0x0200, w_index: iface_num as u16 },
+        negotiated_probe.len() as u32, TransferOptions { endpoint: 0, timeout_ms: 2000, stream_id: 0, iso_packets: 0 },
+    ).map_err(|e| format!("{:?}", e))?;
+    commit_set.submit_transfer(&negotiated_probe).ok();
+    await_transfer(commit_set).ok();
+
+    handle.set_interface_altsetting(iface_num, alt_setting).ok();
+
+    let num_packets: u32 = 32;
+    let packet_stride: u32 = max_packet_size as u32;
+    let buffer_size: u32 = num_packets * packet_stride;
+    let opts = TransferOptions {
+        endpoint: ep_addr, timeout_ms: 2000, stream_id: 0, iso_packets: num_packets,
+    };
+
+    Ok(WebcamFrameStream {
+        handle,
+        iface_num,
+        ep_addr,
+        max_packet_size,
+        actual_frame_size,
+        min_frame_size: 28_800,
+        packet_stride,
+        num_packets,
+        buffer_size,
+        opts,
+        frame_count: std::cell::Cell::new(0),
+        last_fid: std::cell::Cell::new(0),
+        frame_buffer: std::cell::RefCell::new(Vec::new()),
+        frame_started: std::cell::Cell::new(false),
+    })
+}
+
 // ── Main entry point (native) ─────────────────────────────────────────────────
 
 #[cfg(not(target_family = "wasm"))]
