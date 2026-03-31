@@ -37,5 +37,5 @@ just ps5-maze
 ```
 
 ---
-Original research and implementation by **IDLab Discover**.
+Original research and implementation by the **contributors**!
 Licensed under the **MIT License**.

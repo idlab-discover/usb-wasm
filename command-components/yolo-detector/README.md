@@ -37,5 +37,5 @@ sudo ../../../target/release/usb-wasi-host \
 ```
 
 ---
-Original research and implementation by **IDLab Discover**.
+Original research and implementation by the **contributors**!
 Licensed under the **MIT License**.

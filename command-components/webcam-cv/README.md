@@ -11,7 +11,7 @@ The `webcam-cv` component implements a specialized video capture pipeline that i
 - **Isochronous Reassembly**: Manages raw USB packets and reassembles them into complete frames by tracking UVC payload header flags (FID toggle, EOF bit).
 - **MJPEG & YUYV Support**: Decodes both MJPEG and YUYV (YUV 4:2:2) pixel formats.
 - **ASCII Art Rendering**: Real-time rendering of the webcam feed as ASCII art in the terminal for instant verification.
-- **Wasm & Native Dual-Path**: Supports both `wasm32-wasip2` and native execution for comparison and testing.
+- **WebAssembly Implementation**: Fully compliant with the `wasm32-wasip2` target, interacting securely with physical USB hardware.
 
 ## Technical Details
 
@@ -31,5 +31,5 @@ just webcam-cv
 ```
 
 ---
-Original research and implementation by **IDLab Discover**.
+Original research and implementation by the **contributors**!
 Licensed under the **MIT License**.
