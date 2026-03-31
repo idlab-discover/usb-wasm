@@ -1,3 +1,6 @@
+// Copyright (c) 2026 IDLab Discover
+// SPDX-License-Identifier: MIT
+
 use std::io::{self, Read, Seek, Write};
 
 use bulk_only::BulkOnlyTransportDevice;

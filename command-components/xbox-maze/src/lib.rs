@@ -1,3 +1,6 @@
+// Copyright (c) 2026 IDLab Discover
+// SPDX-License-Identifier: MIT
+
 use rusb::{Context, Direction, UsbContext};
 use std::io;
 use std::io::Write;

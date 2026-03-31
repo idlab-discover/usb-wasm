@@ -1,14 +1,15 @@
 # USB-WASM
 
-Prototype design and implementation of an interface for accessing and communicating with USB devices from a WebAssembly Component. This project forms part of my Master's thesis.
+This repository contains WebAssembly components, WIT interface definitions, and host implementations for the WASI-USB ecosystem. It includes a variety of demonstrations, from simple USB enumeration to real-time Computer Vision pipelines.
 
-## Repository structure
+Original research and implementation by **IDLab Discover**.
 
-- [`./wit/`](./wit/) contains the interface definition in the WIT IDL.
-- [`./usb-wasm`](./usb-wasm/) contains the host implementation of the interface for Wasmtime.
-- [`./usb-wasm-bindings`](./usb-wasm-bindings/) contains the automatically generated Rust bindings. This crate is used in the example/test command components.
-- [`./command-components`](./command-components/) contains a couple of command components implemented using the interface.
-- [`./wasmtime-usb`](./wasmtime-usb/) implements a Component Model-enabled Wasmtime CLI application to run command components that use the interface.
+## Project Structure
+
+- **[`wit/`](./wit/)**: Formal interface definitions (WIT) for USB operations, descriptors, transfers, and Computer Vision (CV).
+- **[`command-components/`](./command-components/)**: Guest components implementing specific USB and CV logic (e.g., `lsusb`, `yolo-detector`).
+- **[`usb-wasm-bindings/`](./usb-wasm-bindings/)**: Automatically generated Rust bindings for the WIT interfaces.
+- **[`wasmtime-usb/`](./wasmtime-usb/)**: A custom Wasmtime-based runtime that incorporates the WASI-USB host implementation.
 
 ## Requirements
 

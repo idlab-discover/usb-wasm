@@ -1,0 +1,18 @@
+[
+  {
+    "label": "person",
+    "confidence": 0.95,
+    "box": {
+      "origin": {"x": 100, "y": 100},
+      "size": {"width": 200, "height": 300}
+    }
+  },
+  {
+    "label": "cup",
+    "confidence": 0.88,
+    "box": {
+      "origin": {"x": 400, "y": 400},
+      "size": {"width": 50, "height": 50}
+    }
+  }
+]

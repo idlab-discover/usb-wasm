@@ -7,6 +7,8 @@ edition = "2021"
 usb-wasm-bindings = { workspace = true }
 wit-bindgen = "0.42.1"
 tract-onnx = "0.21.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 image = "0.24.7"
 ndarray = "0.15.6"
 

@@ -1,5 +1,12 @@
 package component:usb@0.2.1;
 
+// Copyright (c) 2026 IDLab Discover
+// SPDX-License-Identifier: MIT
+
+// Standard USB descriptor structures for WASI-USB.
+// This interface defines records for device, configuration, interface, and 
+// endpoint descriptors, mapping directly to the USB specification.
+
 interface descriptors {
     use errors.{libusb-error};
 

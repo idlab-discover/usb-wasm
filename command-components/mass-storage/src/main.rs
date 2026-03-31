@@ -1,3 +1,6 @@
+// Copyright (c) 2026 IDLab Discover
+// SPDX-License-Identifier: MIT
+
 use clap::{Parser, Subcommand};
 use mass_storage::{benchmark, benchmark_raw_speed, cat, ls, tree};
 use tracing::Level;

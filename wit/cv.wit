@@ -1,19 +1,37 @@
 package component:usb@0.2.1;
 
+// Copyright (c) 2026 IDLab Discover
+// SPDX-License-Identifier: MIT
+
+// A common interface for Computer Vision tasks in WASI-USB.
+// This interface defines types for points, bounding boxes, detections, and frames,
+// as well as resources for streaming frames and detecting objects.
+
 interface cv {
+    /// A 2D point with unsigned 32-bit integer coordinates.
     record point { x: u32, y: u32 }
+    /// a 2D size with unsigned 32-bit integer dimensions.
     record size { width: u32, height: u32 }
+    /// a bounding box defined by an origin point and a size.
     record bounding-box { origin: point, size: size }
+    /// An object detection result containing a label, confidence score, and bounding box.
     record detection { label: string, confidence: f32, box: bounding-box }
+    /// A single video frame with raw pixel data and dimensions.
     record frame { data: list<u8>, width: u32, height: u32 }
 
+    /// A resource for reading frames from a video source (e.g., a webcam).
     resource frame-stream {
+        /// Creates a new frame stream for the given device index.
         constructor(index: u32);
+        /// Reads the next frame from the stream.
         read-frame: func() -> result<frame, string>;
     }
 
+    /// A resource for performing object detection using a pre-trained model.
     resource object-detector {
+        /// Creates a new object detector with the given model path.
         constructor(model-path: string);
+        /// Detects objects in the provided frame.
         detect: func(f: frame) -> result<list<detection>, string>;
     }
 }

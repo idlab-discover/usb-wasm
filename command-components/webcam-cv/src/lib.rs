@@ -1,3 +1,11 @@
+// Copyright (c) 2026 IDLab Discover
+// SPDX-License-Identifier: MIT
+
+//! Webcam Computer Vision Component
+//!
+//! This component provides functionality for capturing frames from a webcam
+//! using WASI-USB and exposing them through the WASI-CV interface.
+
 pub mod webcam;
 
 #[allow(dead_code)]
