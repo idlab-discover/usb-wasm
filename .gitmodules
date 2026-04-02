@@ -1,4 +1,3 @@
-
 [submodule "rusb-wasi"]
 	path = rusb-wasi
 	url = git@github.com:siwieme/rusb-wasi.git
