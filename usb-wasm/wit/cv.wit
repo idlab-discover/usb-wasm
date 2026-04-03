@@ -1,0 +1,21 @@
+package component:usb@0.2.1;
+
+interface cv {
+    record point { x: u32, y: u32 }
+    record size { width: u32, height: u32 }
+    record bounding-box { origin: point, size: size }
+    record detection { label: string, confidence: f32, box: bounding-box }
+    record frame { data: list<u8>, width: u32, height: u32 }
+
+    resource frame-stream {
+        constructor(index: u32);
+        read-frame: func() -> result<frame, string>;
+    }
+
+    resource object-detector {
+        constructor(model-path: string);
+        detect: func(f: frame) -> result<list<detection>, string>;
+    }
+}
+
+

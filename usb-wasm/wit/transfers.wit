@@ -34,9 +34,9 @@ interface transfers {
         cancel-transfer: func() -> result<_, libusb-error>;
     }
 
-    /// Wait for the transfer to complete (bulk/interrupt/control).
-    /// Returns Ok(data) on success, or an error code on failure.
-    await-transfer: func(xfer: transfer) -> result<list<u8>, libusb-error>;
+    /// Wait for the transfer to complete.
+    /// Returns Ok(transfer-result) on success, or an error code on failure.
+    await-transfer: func(xfer: transfer) -> result<transfer-result, libusb-error>;
 
     // ── Isochronous extensions ──────────────────────────────────────────────
 
@@ -59,15 +59,11 @@ interface transfers {
         status: iso-packet-status,
     }
 
-    /// Full result of an isochronous transfer.
-    /// `data` is the flat buffer (packet-size * num-packets bytes).
-    /// `packets` describes actual-length per packet so callers can slice correctly.
-    record iso-result {
+    /// Full result of a USB transfer.
+    /// `data` is the raw buffer.
+    /// `packets` is non-empty only for isochronous transfers.
+    record transfer-result {
         data: list<u8>,
         packets: list<iso-packet>,
     }
-
-    /// Like await-transfer but for isochronous transfers.
-    /// Returns per-packet metadata alongside the raw data buffer.
-    await-iso-transfer: func(xfer: transfer) -> result<iso-result, libusb-error>;
 }
