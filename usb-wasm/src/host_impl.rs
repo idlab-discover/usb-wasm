@@ -237,12 +237,11 @@ impl<'a> HostFrameStream for UsbView<'a> {
         let handle = self.0.backend.open(&uvc_device).expect("could not open UVC device");
         
         // 1. Handshake: Probe/Commit
-        handshake_uvc(self, &handle, streaming_iface).expect("UVC handshake failed");
+        let actual_frame_size = handshake_uvc(self, &handle, streaming_iface).expect("UVC handshake failed");
 
         // 2. Set Alt Setting to start streaming
         self.0.backend.set_interface_alt_setting(&handle, streaming_iface, alt_setting).expect("could not set alt setting");
 
-        let actual_frame_size = 640 * 480 * 2; // Default for YUYV or estimated
         let num_packets = 32;
         let packet_stride = max_packet_size as u32;
 
@@ -333,15 +332,20 @@ impl<'a> HostFrameStream for UsbView<'a> {
                 let mut frame_started_lock = frame_started_arc.lock().unwrap();
                 let mut frame_buffer_lock = frame_buffer_arc.lock().unwrap();
 
-                if fid != *last_fid_lock {
-                    // New frame detected via FID toggle
+                let payload = &packet_data[header_len as usize..];
+
+                // Additional MJPEG check: SOI (Start of Image)
+                let has_soi = payload.len() >= 2 && payload[0] == 0xFF && payload[1] == 0xD8;
+                let has_eoi = payload.len() >= 2 && (payload[payload.len()-2] == 0xFF && payload[payload.len()-1] == 0xD9);
+
+                if fid != *last_fid_lock || has_soi {
+                    // New frame detected via FID toggle or MJPEG SOI
                     if *frame_started_lock && !frame_buffer_lock.is_empty() {
                         let final_data = frame_buffer_lock.clone();
                         frame_buffer_lock.clear();
                         *last_fid_lock = fid;
                         *frame_started_lock = true;
-                        // Copy current packet data starting from header_len
-                        frame_buffer_lock.extend_from_slice(&packet_data[header_len as usize..]);
+                        frame_buffer_lock.extend_from_slice(payload);
                         
                         self.0.log_call("cv::frame_stream::read_frame", start, Some(final_data.len()));
                         return Ok(Frame {
@@ -356,10 +360,10 @@ impl<'a> HostFrameStream for UsbView<'a> {
                 }
 
                 if *frame_started_lock {
-                    frame_buffer_lock.extend_from_slice(&packet_data[header_len as usize..]);
+                    frame_buffer_lock.extend_from_slice(payload);
                 }
 
-                if eof {
+                if eof || has_eoi {
                     let final_data = frame_buffer_lock.clone();
                     frame_buffer_lock.clear();
                     *frame_started_lock = false;
@@ -408,7 +412,7 @@ fn find_uvc_device(view: &mut UsbView, devices: &[(UsbDevice, DeviceDescriptor, 
     None
 }
 
-fn handshake_uvc(view: &mut UsbView, handle: &UsbDeviceHandle, iface: u8) -> Result<(), String> {
+fn handshake_uvc(view: &mut UsbView, handle: &UsbDeviceHandle, iface: u8) -> Result<u32, String> {
     let mut probe = vec![0u8; 26];
     // 1. Set Interface 0
     view.0.backend.set_interface_alt_setting(handle, iface, 0).map_err(|e| e.to_string())?;
@@ -426,7 +430,11 @@ fn handshake_uvc(view: &mut UsbView, handle: &UsbDeviceHandle, iface: u8) -> Res
     // 5. Commit SET_CUR
     control_transfer(view, handle, 0x21, UVC_SET_CUR, UVC_VS_COMMIT_CONTROL, iface as u16 + 1, &mut probe)?;
 
-    Ok(())
+    // Extract dwMaxVideoFrameSize (offset 18, 4 bytes)
+    let max_frame_size = u32::from_le_bytes([probe[18], probe[19], probe[20], probe[21]]);
+    info!("UVC Handshake successful. Max frame size: {}", max_frame_size);
+
+    Ok(max_frame_size)
 }
 
 fn control_transfer(_view: &mut UsbView, handle: &UsbDeviceHandle, bm_request_type: u8, b_request: u8, w_value: u16, w_index: u16, data: &mut [u8]) -> Result<(), String> {
@@ -463,7 +471,13 @@ impl<'a> HostObjectDetector for UsbView<'a> {
         info!("Initialising YOLO model. Input path: '{}'", model_path);
         
         let path = if model_path.is_empty() {
-            "../yolov8n.onnx".to_string()
+            if std::path::Path::new("yolov8n.onnx").exists() {
+                "yolov8n.onnx".to_string()
+            } else if std::path::Path::new("../yolov8n.onnx").exists() {
+                "../yolov8n.onnx".to_string()
+            } else {
+                "yolov8n.onnx".to_string() // Fallback
+            }
         } else {
             model_path.clone()
         };
