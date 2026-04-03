@@ -17,7 +17,7 @@ use libusb1_sys::{
     libusb_kernel_driver_active, libusb_detach_kernel_driver, libusb_attach_kernel_driver,
     libusb_has_capability, libusb_hotplug_callback_handle, libusb_hotplug_register_callback,
     libusb_handle_events_timeout_completed,
-    libusb_alloc_transfer, libusb_free_transfer, libusb_submit_transfer, libusb_cancel_transfer,
+    libusb_alloc_transfer,
     libusb_fill_bulk_transfer, libusb_fill_interrupt_transfer, libusb_fill_control_transfer, libusb_fill_iso_transfer,
 };
 use libusb1_sys::constants::{
@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::VecDeque;
 use std::thread;
-use log::{debug, error, info, trace};
+// Unused log import removed
 use libc::timeval;
 use once_cell::sync::Lazy;
 

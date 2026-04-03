@@ -3,14 +3,29 @@ use crate::bindings::component::usb::descriptors::{DeviceDescriptor, Configurati
 use wasmtime_wasi::IoView;
 use crate::bindings::component::usb::configuration::ConfigValue;
 use crate::bindings::component::usb::transfers::{Host as HostTransfers, HostTransfer, IsoPacket, IsoPacketStatus, TransferResult, TransferType, TransferSetup, TransferOptions};
-use crate::bindings::component::usb::cv::{HostFrameStream, HostObjectDetector, Detection, Frame};
+use crate::bindings::component::usb::cv::{HostFrameStream, HostObjectDetector, Detection, Frame, Point, Size, BoundingBox};
 use crate::bindings::component::usb::errors::LibusbError;
 use crate::bindings::component::usb::usb_hotplug::{Host as HostHotplug, Event, Info};
 use crate::{UsbDevice, UsbDeviceHandle, UsbTransfer, ObjectDetector, FrameStream, UsbView};
 use wasmtime::component::Resource;
 
 use std::time::Instant;
-use log::info;
+use tract_onnx::prelude::*;
+use ndarray::prelude::*;
+use image::DynamicImage;
+use tracing::{info, error};
+
+const YOLO_LABELS: &[&str] = &[
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
+    "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
+    "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
+    "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
+    "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+    "hair drier", "toothbrush"
+];
 
 const USB_CLASS_VIDEO: u8 = 0x0E;
 
@@ -217,15 +232,175 @@ impl<'a> HostFrameStream for UsbView<'a> {
 
 impl<'a> HostObjectDetector for UsbView<'a> {
     fn new(&mut self, model_path: String) -> Resource<ObjectDetector> {
-        info!("Loading YOLO model from {}", model_path);
-        // This is a placeholder for actual tract integration
-        self.table().push(ObjectDetector { model_path, model: None }).expect("resource push failed")
+        info!("Initialising YOLO model. Input path: '{}'", model_path);
+        
+        let path = if model_path.is_empty() {
+            "../yolov8n.onnx".to_string()
+        } else {
+            model_path.clone()
+        };
+
+        let model = match tract_onnx::onnx()
+            .model_for_path(&path)
+            .and_then(|m| m.with_input_fact(0, f32::fact(&[1, 3, 640, 640]).into()))
+            .and_then(|m| m.into_optimized())
+            .and_then(|m| m.into_runnable()) 
+        {
+            Ok(m) => {
+                info!("Successfully loaded and optimised YOLO model from {}", path);
+                Some(m)
+            },
+            Err(e) => {
+                error!("Failed to load YOLO model from {}: {:?}", path, e);
+                None
+            }
+        };
+
+        self.table().push(ObjectDetector { model_path, model }).expect("resource push failed")
     }
-    fn detect(&mut self, _rep: Resource<ObjectDetector>, _f: Frame) -> Result<Vec<Detection>, String> {
-        Ok(vec![])
+
+    fn detect(&mut self, rep: Resource<ObjectDetector>, f: Frame) -> Result<Vec<Detection>, String> {
+        let detector = self.table().get(&rep).map_err(|e| e.to_string())?;
+        
+        let model = match &detector.model {
+            Some(m) => m,
+            None => return Err("Model not loaded".to_string()),
+        };
+
+        // --- Pre-processing ---
+        let img = image::RgbImage::from_raw(f.width, f.height, f.data)
+            .ok_or_else(|| "Failed to create image from raw bytes".to_string())?;
+        let dynamic_img = DynamicImage::ImageRgb8(img);
+        
+        // Resize to 640x640 (standard YOLOv8 size)
+        let resized = dynamic_img.resize_exact(640, 640, image::imageops::FilterType::Triangle);
+        
+        // Convert to ndarray [1, 3, 640, 640] f32
+        let mut tensor = Array4::<f32>::zeros((1, 3, 640, 640));
+        for (x, y, rgb) in resized.to_rgb8().enumerate_pixels() {
+            tensor[[0, 0, y as usize, x as usize]] = rgb[0] as f32 / 255.0;
+            tensor[[0, 1, y as usize, x as usize]] = rgb[1] as f32 / 255.0;
+            tensor[[0, 2, y as usize, x as usize]] = rgb[2] as f32 / 255.0;
+        }
+
+        // --- Inference ---
+        let tract_tensor = Tensor::from(tensor);
+        let result = model.run(tract_onnx::prelude::tvec!(tract_tensor.into()))
+            .map_err(|e| format!("Inference failed: {:?}", e))?;
+        
+        let output = result[0].to_array_view::<f32>()
+            .map_err(|e| format!("Failed to get output array: {:?}", e))?;
+
+        // YOLOv8 output is [1, 84, 8400]
+        // 84 = [x, y, w, h, class0_score, ..., class79_score]
+        let output = output.index_axis(Axis(0), 0); // remove batch dim -> [84, 8400]
+
+        // --- Post-processing ---
+        let mut detections = Vec::new();
+        let conf_threshold = 0.25;
+
+        for i in 0..8400 {
+            let col = output.index_axis(Axis(1), i);
+            
+            // Find max class score
+            let mut max_score = 0.0;
+            let mut class_id = 0;
+            for c in 0..80 {
+                let score = col[4 + c];
+                if score > max_score {
+                    max_score = score;
+                    class_id = c;
+                }
+            }
+
+            if max_score > conf_threshold {
+                let cx = col[0];
+                let cy = col[1];
+                let w = col[2];
+                let h = col[3];
+                
+                // Convert center to corners (still in 640x640 space)
+                let x1 = cx - w / 2.0;
+                let y1 = cy - h / 2.0;
+                
+                detections.push(IntermediateDetection {
+                    x1, y1, w, h,
+                    score: max_score,
+                    class_id,
+                });
+            }
+        }
+
+        // Apply NMS
+        let final_detections = apply_nms(detections, 0.45);
+
+        // Map back to original image size
+        let results = final_detections.into_iter().map(|d| {
+            let scale_x = f.width as f32 / 640.0;
+            let scale_y = f.height as f32 / 640.0;
+            
+            Detection {
+                label: YOLO_LABELS.get(d.class_id).unwrap_or(&"unknown").to_string(),
+                confidence: d.score,
+                box_: BoundingBox {
+                    origin: Point { x: (d.x1 * scale_x) as u32, y: (d.y1 * scale_y) as u32 },
+                    size: Size { width: (d.w * scale_x) as u32, height: (d.h * scale_y) as u32 },
+                }
+            }
+        }).collect();
+
+        Ok(results)
     }
+
     fn drop(&mut self, rep: Resource<ObjectDetector>) -> wasmtime::Result<()> {
         let _ = self.table().delete(rep);
         Ok(())
     }
+}
+
+struct IntermediateDetection {
+    x1: f32,
+    y1: f32,
+    w: f32,
+    h: f32,
+    score: f32,
+    class_id: usize,
+}
+
+fn apply_nms(mut detections: Vec<IntermediateDetection>, iou_threshold: f32) -> Vec<IntermediateDetection> {
+    detections.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    
+    let mut keep = Vec::new();
+    let mut suppressed = vec![false; detections.len()];
+
+    for i in 0..detections.len() {
+        if suppressed[i] { continue; }
+        
+        let det_i = &detections[i];
+        keep.push(IntermediateDetection {
+            x1: det_i.x1, y1: det_i.y1, w: det_i.w, h: det_i.h,
+            score: det_i.score, class_id: det_i.class_id
+        });
+
+        for j in (i + 1)..detections.len() {
+            if suppressed[j] { continue; }
+            if iou(det_i, &detections[j]) > iou_threshold {
+                suppressed[j] = true;
+            }
+        }
+    }
+    keep
+}
+
+fn iou(a: &IntermediateDetection, b: &IntermediateDetection) -> f32 {
+    let x1 = a.x1.max(b.x1);
+    let y1 = a.y1.max(b.y1);
+    let x2 = (a.x1 + a.w).min(b.x1 + b.w);
+    let y2 = (a.y1 + a.h).min(b.y1 + b.h);
+
+    let intersection = (x2 - x1).max(0.0) * (y2 - y1).max(0.0);
+    let area_a = a.w * a.h;
+    let area_b = b.w * b.h;
+    
+    intersection / (area_a + area_b - intersection)
 }

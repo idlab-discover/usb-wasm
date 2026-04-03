@@ -2,7 +2,7 @@ use wasmtime::component::ResourceTable;
 use wasmtime_wasi::{WasiView, IoView, WasiCtx};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
-use tract_onnx::prelude::*;
+use tract_onnx::prelude::{RunnableModel, TypedFact, TypedOp, Graph, Tensor};
 
 pub mod usb_backend;
 pub use usb_backend::{HostUsbBackend, LibusbBackend, UsbDevice, UsbDeviceHandle};
@@ -114,7 +114,7 @@ pub struct FrameStream {
 
 pub struct ObjectDetector {
     pub model_path: String,
-    pub model: Option<SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>>,
+    pub model: Option<RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
