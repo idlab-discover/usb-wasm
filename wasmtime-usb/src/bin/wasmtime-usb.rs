@@ -1,11 +1,9 @@
-use anyhow::anyhow;
+use anyhow::Result;
 use clap::Parser;
-use tracing_subscriber::EnvFilter;
-use usb_wasm::error::UsbWasmError;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_usb_cli::HostState;
-use wasmtime_wasi::{I32Exit, WasiView};
+use wasmtime_wasi::WasiView;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -19,73 +17,52 @@ struct Args {
     command_args: Vec<String>,
 }
 
-fn main() -> anyhow::Result<()> {
-    // Set up logging
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::init();
     let args = Args::parse();
-
     let command_component_path = std::path::Path::new(args.command.as_str());
 
-    // Configure an `Engine` and link in all the host components (Wasi preview 2 and our USB component)
+    let mut config = Config::new();
+    config.wasm_component_model(true);
+    config.async_support(true);
+    
+    if args.profile {
+        config.profiler(wasmtime::ProfilingStrategy::PerfMap);
+    }
 
-    let config = {
-        let mut config = Config::new();
-        config.wasm_component_model(true);
-        if args.profile {
-            config.profiler(wasmtime::ProfilingStrategy::PerfMap);
-        }
-        config
-    };
     let engine = Engine::new(&config)?;
-    let mut linker: Linker<HostState> = wasmtime::component::Linker::new(&engine);
-    register_host_components(&mut linker)?;
+    let mut linker: Linker<HostState> = Linker::new(&engine);
+    
+    // Register WASI preview 2 imports
+    wasmtime_wasi::add_to_linker_async(&mut linker)?;
+    
+    // Register our WASI-USB imports
+    usb_wasm::add_to_linker(&mut linker)?;
 
-    // Set up the Store with the command line arguments
-    let mut command_args = args.command_args;
+    let mut command_args = args.command_args.clone();
     command_args.insert(0, args.command.clone());
-    let mut store = Store::new(&engine, HostState::new(&command_args, args.dir));
+    
+    let state = HostState::new(&command_args, args.dir);
+    let mut store = Store::new(&engine, state);
 
-    // Load the component (should be an instance of the wasi command component)
     let component = Component::from_file(&engine, command_component_path)?;
-
-    let (command, _instance) =
-        wasmtime_wasi::bindings::sync::Command::instantiate(&mut store, &component, &linker)?;
-    let result = command.wasi_cli_run().call_run(&mut store);
+    
+    let (command, _instance) = wasmtime_wasi::bindings::Command::instantiate_async(&mut store, &component, &linker).await?;
+    
+    let result = command.wasi_cli_run().call_run(&mut store).await;
+    
+    // Task 10: Export analytical logging results
+    let _ = store.data().export_logs("call_logs.csv");
 
     match result {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(())) => Err(anyhow!("inner error")), // IDK HOW THIS IS CAUSED
+        Ok(Err(())) => Err(anyhow::anyhow!("WASI command failed")),
         Err(e) => {
-            if let Some(source) = e.source() {
-                if let Some(exit_code) = source.downcast_ref::<I32Exit>() {
-                    std::process::exit(exit_code.process_exit_code());
-                    // return Err(exit_code.into());
-                }
-                if let Some(error) = source.downcast_ref::<UsbWasmError>() {
-                    match error {
-                        UsbWasmError::RusbError(err) => {
-                            println!("{}", err);
-                        }
-                        _ => {
-                            println!("{}", error);
-                        }
-                    }
-                    // return Err(exit_code.into());
-                }
-                println!("Source: {}", source);
+            if let Some(exit) = e.downcast_ref::<wasmtime_wasi::I32Exit>() {
+                std::process::exit(exit.process_exit_code());
             }
-            println!("e: {}", e);
-            Ok(())
+            Err(e)
         }
     }
-}
-
-fn register_host_components<T: WasiView>(linker: &mut Linker<T>) -> anyhow::Result<()> {
-    wasmtime_wasi::add_to_linker_sync(linker)?;
-    usb_wasm::add_to_linker(linker)?;
-
-    Ok(())
 }

@@ -3,10 +3,6 @@ name = "wasmtime-usb-cli"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4.5.4", features = ["derive"] }
@@ -14,6 +10,9 @@ serde = { version = "1.0.193", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 usb-wasm = { workspace = true }
-wasmtime = { workspace = true }
+wasmtime = { workspace = true, features = ["async", "component-model"] }
 wasmtime-wasi = { workspace = true }
-
+tokio = { version = "1.36", features = ["full"] }
+log = "0.4"
+env_logger = "0.11"
+csv = "1.4.0"

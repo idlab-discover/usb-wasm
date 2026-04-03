@@ -106,10 +106,20 @@ unsafe impl Send for UsbTransfer {}
 unsafe impl Sync for UsbTransfer {}
 
 pub struct FrameStream {
-    pub index: u32,
-    pub handle: Option<UsbDeviceHandle>,
+    pub handle: UsbDeviceHandle,
     pub iface_num: u8,
+    pub alt_setting: u8,
     pub ep_addr: u8,
+    pub max_packet_size: u16,
+    pub actual_frame_size: u32,
+    pub packet_stride: u32,
+    pub num_packets: u32,
+    
+    // Mutable state for reassembly
+    pub frame_buffer: Arc<Mutex<Vec<u8>>>,
+    pub last_fid: Arc<Mutex<u8>>,
+    pub frame_started: Arc<Mutex<bool>>,
+    pub frame_count: Arc<Mutex<u32>>,
 }
 
 pub struct ObjectDetector {

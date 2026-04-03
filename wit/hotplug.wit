@@ -1,12 +1,5 @@
 package component:usb@0.2.1;
 
-// Copyright (c) 2026 IDLab Discover
-// SPDX-License-Identifier: MIT
-
-// Hotplug notification interface for WASI-USB.
-// This interface allows components to be notified when USB devices 
-// are connected or disconnected from the system.
-
 interface usb-hotplug {
     use errors.{libusb-error};
     use device.{usb-device};

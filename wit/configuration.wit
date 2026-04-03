@@ -1,10 +1,5 @@
 package component:usb@0.2.1;
 
-// Copyright (c) 2026 IDLab Discover
-// SPDX-License-Identifier: MIT
-
-// Configuration types for USB devices in WASI-USB.
-
 interface configuration {
     /// ConfigValue is used to specify a configuration or an unconfigured state.
     variant config-value {

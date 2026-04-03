@@ -28,6 +28,14 @@ const YOLO_LABELS: &[&str] = &[
 ];
 
 const USB_CLASS_VIDEO: u8 = 0x0E;
+const USB_SUBCLASS_VIDEO_STREAMING: u8 = 0x02;
+const UVC_SET_CUR: u8 = 0x01;
+const UVC_GET_CUR: u8 = 0x81;
+const UVC_VS_PROBE_CONTROL: u16 = 0x0100;
+const UVC_VS_COMMIT_CONTROL: u16 = 0x0200;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 // --- Host Implementation for UsbView ---
 
@@ -218,17 +226,237 @@ impl<'a> HostHotplug for UsbView<'a> {
 // --- CV Trait Implementation for UsbView ---
 
 impl<'a> HostFrameStream for UsbView<'a> {
-    fn new(&mut self, index: u32) -> Resource<FrameStream> {
-        self.table().push(FrameStream { index, handle: None, iface_num: 0, ep_addr: 0 }).expect("resource push failed")
+    fn new(&mut self, _index: u32) -> Resource<FrameStream> {
+        let start = Instant::now();
+        info!("Searching for UVC camera...");
+        
+        let devices = self.0.backend.list_devices(&self.0.allowed_usbdevices).expect("could not list devices");
+        let (uvc_device, streaming_iface, ep_addr, alt_setting, max_packet_size) = find_uvc_device(self, &devices)
+            .expect("No UVC camera found with streaming interface");
+
+        let handle = self.0.backend.open(&uvc_device).expect("could not open UVC device");
+        
+        // 1. Handshake: Probe/Commit
+        handshake_uvc(self, &handle, streaming_iface).expect("UVC handshake failed");
+
+        // 2. Set Alt Setting to start streaming
+        self.0.backend.set_interface_alt_setting(&handle, streaming_iface, alt_setting).expect("could not set alt setting");
+
+        let actual_frame_size = 640 * 480 * 2; // Default for YUYV or estimated
+        let num_packets = 32;
+        let packet_stride = max_packet_size as u32;
+
+        let stream = FrameStream {
+            handle,
+            iface_num: streaming_iface,
+            alt_setting,
+            ep_addr,
+            max_packet_size,
+            actual_frame_size,
+            packet_stride,
+            num_packets,
+            frame_buffer: Arc::new(Mutex::new(Vec::with_capacity(actual_frame_size as usize))),
+            last_fid: Arc::new(Mutex::new(0)),
+            frame_started: Arc::new(Mutex::new(false)),
+            frame_count: Arc::new(Mutex::new(0)),
+        };
+
+        let res = self.table().push(stream).expect("resource push failed");
+        self.0.log_call("cv::frame_stream::new", start, None);
+        res
     }
-    fn read_frame(&mut self, _rep: Resource<FrameStream>) -> Result<Frame, String> {
-        Err("Not implemented".to_string())
+
+    fn read_frame(&mut self, rep: Resource<FrameStream>) -> Result<Frame, String> {
+        let start = Instant::now();
+        let (handle, ep_addr, num_packets, packet_stride, frame_buffer_arc, last_fid_arc, frame_started_arc) = {
+            let stream = self.table().get(&rep).map_err(|e| e.to_string())?;
+            (
+                stream.handle.clone(),
+                stream.ep_addr,
+                stream.num_packets,
+                stream.packet_stride,
+                stream.frame_buffer.clone(),
+                stream.last_fid.clone(),
+                stream.frame_started.clone(),
+            )
+        };
+        
+        loop {
+            // ISO transfer
+            let opts = TransferOptions {
+                endpoint: ep_addr,
+                timeout_ms: 1000,
+                stream_id: 0,
+                iso_packets: num_packets,
+            };
+            
+            let xfer = handle.new_transfer(
+                TransferType::Isochronous,
+                TransferSetup { bm_request_type: 0, b_request: 0, w_value: 0, w_index: 0 },
+                num_packets * packet_stride,
+                opts
+            ).map_err(|e| format!("Xfer alloc failed: {:?}", e))?;
+
+            xfer.submit().map_err(|e| format!("Xfer submit failed: {:?}", e))?;
+
+            // Polling loop for completion
+            while !xfer.completed.load(Ordering::SeqCst) {
+                 std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+
+            // Reassemble
+            let results = xfer.iso_packet_results.lock().unwrap().clone().unwrap_or_default();
+            let mut data_ptr = 0;
+            
+            for (actual_length, status) in results {
+                if status != 0 { 
+                    data_ptr += packet_stride as usize;
+                    continue; 
+                }
+                if actual_length < 2 { 
+                    data_ptr += packet_stride as usize;
+                    continue; 
+                }
+
+                let packet_data = &xfer.buffer[data_ptr..data_ptr + actual_length as usize];
+                let header_len = packet_data[0];
+                if header_len < 2 || header_len as usize > packet_data.len() {
+                    data_ptr += packet_stride as usize;
+                    continue;
+                }
+
+                let bitfield = packet_data[1];
+                let fid = bitfield & 0x01;
+                let eof = (bitfield & 0x02) != 0;
+
+                let mut last_fid_lock = last_fid_arc.lock().unwrap();
+                let mut frame_started_lock = frame_started_arc.lock().unwrap();
+                let mut frame_buffer_lock = frame_buffer_arc.lock().unwrap();
+
+                if fid != *last_fid_lock {
+                    // New frame detected via FID toggle
+                    if *frame_started_lock && !frame_buffer_lock.is_empty() {
+                        let final_data = frame_buffer_lock.clone();
+                        frame_buffer_lock.clear();
+                        *last_fid_lock = fid;
+                        *frame_started_lock = true;
+                        // Copy current packet data starting from header_len
+                        frame_buffer_lock.extend_from_slice(&packet_data[header_len as usize..]);
+                        
+                        self.0.log_call("cv::frame_stream::read_frame", start, Some(final_data.len()));
+                        return Ok(Frame {
+                            data: final_data,
+                            width: 640,
+                            height: 480,
+                        });
+                    }
+                    *frame_started_lock = true;
+                    *last_fid_lock = fid;
+                    frame_buffer_lock.clear();
+                }
+
+                if *frame_started_lock {
+                    frame_buffer_lock.extend_from_slice(&packet_data[header_len as usize..]);
+                }
+
+                if eof {
+                    let final_data = frame_buffer_lock.clone();
+                    frame_buffer_lock.clear();
+                    *frame_started_lock = false;
+                    
+                    self.0.log_call("cv::frame_stream::read_frame", start, Some(final_data.len()));
+                    return Ok(Frame {
+                        data: final_data,
+                        width: 640,
+                        height: 480,
+                    });
+                }
+
+                data_ptr += packet_stride as usize;
+            }
+        }
     }
+
     fn drop(&mut self, rep: Resource<FrameStream>) -> wasmtime::Result<()> {
-        let _ = self.table().delete(rep);
+        let stream = self.table().delete(rep)?;
+        // Set alt setting 0 to stop camera
+        let _ = self.0.backend.set_interface_alt_setting(&stream.handle, stream.iface_num, 0);
+        self.0.backend.release_interface(&stream.handle, stream.iface_num);
         Ok(())
     }
 }
+
+fn find_uvc_device(view: &mut UsbView, devices: &[(UsbDevice, DeviceDescriptor, DeviceLocation)]) -> Option<(UsbDevice, u8, u8, u8, u16)> {
+    for (dev, desc, _) in devices {
+        // Look for Video Class device
+        if desc.device_class == USB_CLASS_VIDEO {
+            // Find VideoStreaming interface
+            let config = view.0.backend.get_active_configuration_descriptor(dev).ok()?;
+            for iface in config.interfaces {
+                if iface.interface_class == USB_CLASS_VIDEO && iface.interface_subclass == USB_SUBCLASS_VIDEO_STREAMING {
+                    // Find alternate setting with isochronous endpoint
+                    // For simplicity, pick one with decent max_packet_size
+                    for ep in &iface.endpoints {
+                        if (ep.attributes & 0x03) == 0x01 { // Isochronous
+                            return Some((*dev, iface.interface_number, ep.endpoint_address, iface.alternate_setting, ep.max_packet_size));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn handshake_uvc(view: &mut UsbView, handle: &UsbDeviceHandle, iface: u8) -> Result<(), String> {
+    let mut probe = vec![0u8; 26];
+    // 1. Set Interface 0
+    view.0.backend.set_interface_alt_setting(handle, iface, 0).map_err(|e| e.to_string())?;
+    view.0.backend.claim_interface(handle, iface).map_err(|e| e.to_string())?;
+
+    // 2. Probe GET_CUR
+    control_transfer(view, handle, 0xA1, UVC_GET_CUR, UVC_VS_PROBE_CONTROL, iface as u16 + 1, &mut probe)?;
+    
+    // 3. Probe SET_CUR
+    control_transfer(view, handle, 0x21, UVC_SET_CUR, UVC_VS_PROBE_CONTROL, iface as u16 + 1, &mut probe)?;
+
+    // 4. Probe GET_CUR again
+    control_transfer(view, handle, 0xA1, UVC_GET_CUR, UVC_VS_PROBE_CONTROL, iface as u16 + 1, &mut probe)?;
+
+    // 5. Commit SET_CUR
+    control_transfer(view, handle, 0x21, UVC_SET_CUR, UVC_VS_COMMIT_CONTROL, iface as u16 + 1, &mut probe)?;
+
+    Ok(())
+}
+
+fn control_transfer(_view: &mut UsbView, handle: &UsbDeviceHandle, bm_request_type: u8, b_request: u8, w_value: u16, w_index: u16, data: &mut [u8]) -> Result<(), String> {
+    let opts = TransferOptions {
+        endpoint: 0,
+        timeout_ms: 1000,
+        stream_id: 0,
+        iso_packets: 0,
+    };
+    let setup = TransferSetup {
+        bm_request_type,
+        b_request,
+        w_value,
+        w_index,
+    };
+    
+    let xfer = handle.new_transfer(TransferType::Control, setup, data.len() as u32, opts).map_err(|e| e.to_string())?;
+    xfer.submit().map_err(|e| e.to_string())?;
+    
+    while !xfer.completed.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    
+    if bm_request_type & 0x80 != 0 {
+        data.copy_from_slice(&xfer.buffer[8..8+data.len()]);
+    }
+    
+    Ok(())
+}
+
 
 impl<'a> HostObjectDetector for UsbView<'a> {
     fn new(&mut self, model_path: String) -> Resource<ObjectDetector> {

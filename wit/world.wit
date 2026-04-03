@@ -1,10 +1,5 @@
 package component:usb@0.2.1;
 
-// Copyright (c) 2026 IDLab Discover
-// SPDX-License-Identifier: MIT
-
-// Main worlds for WASI-USB defining imports and exports for hosts and guests.
-
 world host {
     import transfers;
     import errors;
@@ -30,12 +25,10 @@ world guest {
     import descriptors;
     import configuration;
     import usb-hotplug;
+    import cv;
 }
 
 world cguest {
-    import wasi:cli/environment@0.2.0;
-    import wasi:cli/stdout@0.2.0;
-    import wasi:cli/stderr@0.2.0;
     import transfers;
     import errors;
     import device;
@@ -44,6 +37,5 @@ world cguest {
     import usb-hotplug;
     import cv;
 
-    export wasi:cli/run@0.2.0;
-    export cv;
+    export wasi:cli/run@0.2.5;
 }

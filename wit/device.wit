@@ -1,12 +1,5 @@
 package component:usb@0.2.1;
 
-// Copyright (c) 2026 IDLab Discover
-// SPDX-License-Identifier: MIT
-
-// The core USB device interface for WASI-USB.
-// This interface provides resources and functions for enumerating, opening, 
-// and configuring USB devices, as well as submitting transfers.
-
 interface device {
     // Import the error codes enum from errors.wit
     use errors.{libusb-error};

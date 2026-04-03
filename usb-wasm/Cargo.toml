@@ -14,7 +14,6 @@ wasmtime-wasi = { workspace = true }
 tokio = { version = "1.36", features = ["full"] }
 oneshot = "0.1"
 anyhow = "1.0.75"
-nokhwa = { version = "0.10.4", features = ["input-native"] }
 tract-onnx = "0.21.1"
 image = "0.24.7"
 ndarray = "0.15.6"
