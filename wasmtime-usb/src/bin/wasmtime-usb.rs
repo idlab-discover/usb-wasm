@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     wasmtime_wasi::add_to_linker_async(&mut linker)?;
     
     // Register our WASI-USB imports
-    usb_wasm::add_to_linker(&mut linker)?;
+    usb_wasm::add_to_linker(&mut linker, |state| &mut state.inner)?;
 
     let mut command_args = args.command_args.clone();
     command_args.insert(0, args.command.clone());
@@ -48,9 +48,9 @@ async fn main() -> Result<()> {
 
     let component = Component::from_file(&engine, command_component_path)?;
     
-    let (command, _instance) = wasmtime_wasi::bindings::Command::instantiate_async(&mut store, &component, &linker).await?;
+    let command = wasmtime_wasi::bindings::Command::instantiate_async(&mut store, &component, &linker).await?;
     
-    let result = command.wasi_cli_run().call_run(&mut store).await;
+    let result: Result<Result<(), ()>, anyhow::Error> = command.wasi_cli_run().call_run(&mut store).await;
     
     // Task 10: Export analytical logging results
     let _ = store.data().export_logs("call_logs.csv");
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
         Ok(Err(())) => Err(anyhow::anyhow!("WASI command failed")),
         Err(e) => {
             if let Some(exit) = e.downcast_ref::<wasmtime_wasi::I32Exit>() {
-                std::process::exit(exit.process_exit_code());
+                std::process::exit(exit.0);
             }
             Err(e)
         }

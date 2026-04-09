@@ -1,22 +1,27 @@
 lsusb:
     just build-lsusb
-    cargo run -- ./out/lsusb.wasm
+    cargo build
+    sudo ./target/debug/wasmtime-usb ./out/lsusb.wasm
 
 xbox:
     just build-xbox
-    cargo run -- ./out/xbox.wasm
+    cargo build
+    sudo ./target/debug/wasmtime-usb ./out/xbox.wasm
 
 ping *arg:
     just build-ping
-    cargo run --release -- --dir=. ./out/ping.wasm -- {{arg}}
+    cargo build --release
+    sudo ./target/release/wasmtime-usb --dir=. ./out/ping.wasm -- {{arg}}
 
 control:
     just build-control
-    cargo run -- ./out/control.wasm
+    cargo build
+    sudo ./target/debug/wasmtime-usb ./out/control.wasm
 
 mass-storage *arg:
     just build-mass-storage
-    cargo run --release -- --dir=. ./out/mass-storage.wasm -- {{arg}}
+    cargo build --release
+    sudo ./target/release/wasmtime-usb --dir=. ./out/mass-storage.wasm -- {{arg}}
 
 enumerate-devices-go:
     just build-enumerate-devices-go
@@ -24,18 +29,21 @@ enumerate-devices-go:
 
 enumerate-devices-rust:
     just build-enumerate-devices-rust
-    cargo run -- ./out/enumerate-devices-rust.wasm
+    cargo build
+    sudo ./target/debug/wasmtime-usb ./out/enumerate-devices-rust.wasm
 
 webcam-cv:
     just build-webcam-cv
-    cargo run -- ./out/webcam-cv.wasm
+    cargo build
+    sudo ./target/debug/wasmtime-usb ./out/webcam-cv.wasm
 
 native-webcam:
     cargo run -p webcam-cv
 
 ps5-maze:
     just build-ps5-maze
-    cargo run -- ./out/ps5-maze.wasm
+    cargo build
+    sudo ./target/debug/wasmtime-usb ./out/ps5-maze.wasm
 
 flamegraph-mass-storage:
     just build-mass-storage
@@ -51,38 +59,38 @@ build-runtime:
 
 build-lsusb:
     just regenerate-bindings
-    cargo build -p lsusb --target=wasm32-wasip1
-    wasm-tools component new ./target/wasm32-wasip1/debug/lsusb.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/lsusb.wasm
+    cargo build -p lsusb --target=wasm32-wasip2
+    cp target/wasm32-wasip2/debug/lsusb.wasm out/lsusb.wasm
 
 build-xbox:
     just regenerate-bindings
-    cargo build -p xbox --target=wasm32-wasip1
-    wasm-tools component new ./target/wasm32-wasip1/debug/xbox.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/xbox.wasm
+    cargo build -p xbox --target=wasm32-wasip2
+    cp target/wasm32-wasip2/debug/xbox.wasm out/xbox.wasm
 
 build-xbox-maze:
     just regenerate-bindings
-    cargo build -p xbox-maze --target=wasm32-wasip1
-    wasm-tools component new ./target/wasm32-wasip1/debug/xbox-maze.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/xbox-maze.wasm
+    cargo build -p xbox-maze --target=wasm32-wasip2
+    cp target/wasm32-wasip2/debug/xbox_maze.wasm out/xbox-maze.wasm
 
 build-ping:
     just regenerate-bindings
-    cargo build -p ping --release --target=wasm32-wasip1
-    wasm-tools component new ./target/wasm32-wasip1/release/ping.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/ping.wasm
+    cargo build -p ping --release --target=wasm32-wasip2
+    cp target/wasm32-wasip2/release/ping.wasm out/ping.wasm
 
 build-control:
     just regenerate-bindings
-    cargo build -p control --target=wasm32-wasip1
-    wasm-tools component new ./target/wasm32-wasip1/debug/control.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/control.wasm
+    cargo build -p control --target=wasm32-wasip2
+    cp target/wasm32-wasip2/debug/control.wasm out/control.wasm
 
 build-mass-storage:
     just regenerate-bindings
-    cargo build -p mass-storage --release --target=wasm32-wasip1
-    wasm-tools component new ./target/wasm32-wasip1/release/mass-storage.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/mass-storage.wasm
+    cargo build -p mass-storage --release --target=wasm32-wasip2
+    cp target/wasm32-wasip2/release/mass_storage.wasm out/mass-storage.wasm
 
 build-enumerate-devices-rust:
     just regenerate-bindings
-    cargo build -p enumerate-devices-rust --release --target=wasm32-wasip1
-    wasm-tools component new ./target/wasm32-wasip1/release/enumerate-devices-rust.wasm --adapt ./command-components/wasi_snapshot_preview1.command.wasm -o out/enumerate-devices-rust.wasm
+    cargo build -p enumerate-devices-rust --release --target=wasm32-wasip2
+    cp target/wasm32-wasip2/release/enumerate_devices_rust.wasm out/enumerate-devices-rust.wasm
 
 SYSROOT := "/Users/sibrenwieme/Documents/Masterproef/usb-wasm/rusb-wasi/examples/wasi-workload/wasi-sysroot"
 

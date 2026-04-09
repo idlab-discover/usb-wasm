@@ -23,10 +23,9 @@ impl HostState {
         let table = ResourceTable::new();
         let inner = MyState {
             table,
-            ctx: wasi_ctx.build(),
+            wasi_ctx: wasi_ctx.build(),
             allowed_usbdevices: AllowedUSBDevices::Denied(vec![]), // Allow all by default for now
             backend: Box::new(LibusbBackend::new()),
-            enable_yolo: true,
             call_logs: Arc::new(Mutex::new(Vec::new())),
         };
 
@@ -58,6 +57,6 @@ impl IoView for HostState {
 
 impl WasiView for HostState {
     fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.inner.ctx
+        &mut self.inner.wasi_ctx
     }
 }

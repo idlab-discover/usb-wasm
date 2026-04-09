@@ -3,6 +3,17 @@ members = [
     "wasmtime-usb",
     "usb-wasm-bindings",
     "usb-wasm",
+    "command-components/control",
+    "command-components/enumerate-devices-rust",
+    "command-components/lsusb",
+    "command-components/mass-storage",
+    "command-components/ping",
+    "command-components/ps5-maze",
+    "command-components/webcam-cv",
+    "command-components/xbox-maze",
+    "command-components/xbox",
+    "command-components/yolo-detector-terminal",
+    "command-components/yolo-detector",
 ]
 exclude = ["rusb-wasi"]
 default-members = ["wasmtime-usb"]
@@ -25,3 +36,4 @@ opt-level = 3
 
 [patch.crates-io]
 rusb = { path = "rusb-wasi" }
+libusb1-sys = { path = "rusb-wasi/libusb1-sys" }
