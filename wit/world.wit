@@ -36,6 +36,13 @@ world cguest {
     import configuration;
     import usb-hotplug;
     import cv;
+    
+    import wasi:cli/environment@0.2.5;
+    import wasi:cli/exit@0.2.5;
+    import wasi:cli/stderr@0.2.5;
+    import wasi:cli/stdin@0.2.5;
+    import wasi:cli/stdout@0.2.5;
 
+    export cv;
     export wasi:cli/run@0.2.5;
 }

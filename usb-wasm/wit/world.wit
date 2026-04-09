@@ -1,4 +1,4 @@
-package component:usb@0.2.1;
+package component:usb;
 
 world host {
     import transfers;
@@ -7,15 +7,6 @@ world host {
     import descriptors;
     import configuration;
     import usb-hotplug;
-    import cv;
-
-    export transfers;
-    export errors;
-    export device;
-    export descriptors;
-    export configuration;
-    export usb-hotplug;
-    export cv;
 }
 
 world guest {

@@ -1,20 +1,20 @@
 # DualSense (PS5) Pacman Maze (WASI-USB)
 
-This component implements a complete maze game, modeled after **Pacman**, that uses a **PS5 DualSense** (or Xbox) controller for real-time input. It demonstrates the capabilities of **WASI-USB** and `rusb-wasi` to handle complex industrial/gaming peripherals from within a sandboxed WebAssembly environment.
+This component implements a complete maze game, modeled after **Pacman**, that uses a **PS5 DualSense** (or Xbox) controller for real-time input. It demonstrates the capabilities of **WASI-USB** and the direct component-model bindings (`usb-wasm-bindings`) to handle complex peripherals from within a sandboxed WebAssembly environment.
 
 ## Overview
 
-The `ps5-maze` component interacts directly with the USB HID reports of a connected gamepad. It parses the raw button and axis data, calculates character movement, and implements Ghost AI that mimics the original Pacman targeting logic.
+The `ps5-maze` component interacts directly with the USB HID reports of a connected gamepad via the `usb_wasm_bindings::transfers` API. It parses raw button and axis data, calculates character movement, and implements Ghost AI that mimics the original Pacman targeting logic.
 
 ## Key Features
 
-- **Direct HID Parsing**: Connects to the DualSense controller (`054c:0ce6`) or Xbox controller (`045e:02ea`) and parses the report maps directly.
+- **Direct HID Parsing**: Connects to the DualSense controller (`054c:0ce6`) or Xbox controller (`045e:02ea`) and uses `new_transfer` + `await_transfer` for low-latency input.
 - **Ghost AI Personality**:
   - **Blinky**: Directly targets Pacman's current position (Chasing).
   - **Pinky**: Targets a position 2 tiles ahead of Pacman (Ambushing).
   - **Inky/Clyde**: Specialized targeting modes (Patrolling/Randomized).
 - **ANSI Console Rendering**: Real-time rendering of the game field in the terminal using ANSI escape codes.
-- **Single-threaded Polling**: Uses non-blocking USB reads (`50ms` timeout) to keep the game loop and AI active without blocking the main thread.
+- **Single-threaded Polling**: Uses non-blocking WASI-USB reads to keep the game loop and AI active.
 
 ## Technical Details
 

@@ -1,10 +1,11 @@
 // Copyright (c) 2026 IDLab Discover
 // SPDX-License-Identifier: MIT
 
-use rusb::{Context, Direction, UsbContext};
+use usb_wasm_bindings::types::{TransferSetup, TransferOptions, TransferType};
+use usb_wasm_bindings::{list_devices, await_transfer};
+
 use std::io;
 use std::io::Write;
-use std::time::Duration;
 
 use anyhow::anyhow;
 use byteorder::ByteOrder;
@@ -142,21 +143,13 @@ pub fn parse_xbox_controller_data(data: &[u8]) -> GamepadState {
     }
 }
 
-/// Parses a DualSense (PS5) controller report map over USB.
-/// 
-/// TODO (User Configurable): 
-/// The indices and bitmasks here correspond to the typical mapping of a PS5 
-/// over USB (Report ID 0x01). You can log `data` directly to terminal using 
-/// `println!("{:?}", data)` to reverse engineer if the buttons don't match up.
 pub fn parse_ps5_controller_data(data: &[u8]) -> GamepadState {
     if data.len() < 10 {
         return GamepadState::default();
     }
     
-    // PS5 DualSense typically uses Report ID 1 over USB
     let offset = if data[0] == 0x01 { 0 } else { return GamepadState::default(); };
     
-    // D-Pad is typically a 4-bit hat switch in byte 8 (values 0-7, 8 is neutral)
     let dpad = data[offset + 8] & 0x0F;
     let up = dpad == 0 || dpad == 1 || dpad == 7;
     let right = dpad == 1 || dpad == 2 || dpad == 3;
@@ -169,10 +162,10 @@ pub fn parse_ps5_controller_data(data: &[u8]) -> GamepadState {
     let triangle = (data[offset + 8] & 0x80) != 0;
 
     GamepadState {
-        a: cross,     // Map cross to A
-        b: circle,    // Map circle to B
-        x: square,    // Map square to X
-        y: triangle,  // Map triangle to Y
+        a: cross,
+        b: circle,
+        x: square,
+        y: triangle,
         up,
         down,
         left,
@@ -203,67 +196,55 @@ enum ControllerType {
 }
 
 pub fn run() -> anyhow::Result<()> {
-    let context = Context::new()?;
-    let mut handle = None;
-    let mut controller_type = ControllerType::Xbox;
-
-    // TODO (User Configurable): 
-    // Here we specify the typical Vendor ID and Product ID for the controllers.
-    // If your PS5 controller has a different PID, update the numbers here.
     let xbox_ids = (0x045e, 0x02ea);
     let ps5_ids = (0x054c, 0x0ce6);
 
-    for device in context.devices()?.iter() {
-        let desc = device.device_descriptor()?;
-        if desc.vendor_id() == xbox_ids.0 && desc.product_id() == xbox_ids.1 {
-            handle = Some(device.open()?);
+    let devices = list_devices().map_err(|e| anyhow!("Failed to list devices: {:?}", e))?;
+    let mut selected_device = None;
+    let mut controller_type = ControllerType::Xbox;
+
+    for (dev, desc, _loc) in devices {
+        if desc.vendor_id == xbox_ids.0 && desc.product_id == xbox_ids.1 {
+            selected_device = Some(dev);
             controller_type = ControllerType::Xbox;
             break;
-        } else if desc.vendor_id() == ps5_ids.0 && desc.product_id() == ps5_ids.1 {
-            handle = Some(device.open()?);
+        } else if desc.vendor_id == ps5_ids.0 && desc.product_id == ps5_ids.1 {
+            selected_device = Some(dev);
             controller_type = ControllerType::PS5;
             break;
         }
     }
 
-    let handle = handle.ok_or_else(|| anyhow!("No supported controller (Xbox or PS5) found!"))?;
-    let device = handle.device();
-    let config_desc = device.config_descriptor(0)?;
-
-    let mut endpoint_in = None;
-    let mut endpoint_out = None;
-    let mut target_interface = None;
-
-    // Find the interface with the interrupt IN endpoint
-    for interface in config_desc.interfaces() {
-        for alt_setting in interface.descriptors() {
-            for ep_desc in alt_setting.endpoint_descriptors() {
-                if ep_desc.transfer_type() == rusb::TransferType::Interrupt {
-                    if ep_desc.direction() == Direction::In {
-                        endpoint_in = Some(ep_desc.address());
-                        target_interface = Some(interface.number());
-                    } else if ep_desc.direction() == Direction::Out {
-                        endpoint_out = Some(ep_desc.address());
-                    }
-                }
-            }
-        }
-        if target_interface.is_some() {
-            break;
-        }
-    }
-
-    let interface_number = target_interface.ok_or_else(|| anyhow!("Could not find an interface with an Interrupt IN endpoint"))?;
-    let endpoint_in = endpoint_in.unwrap();
-
-    // Detach kernel driver if needed
-    let _ = handle.set_auto_detach_kernel_driver(true);
-    handle.claim_interface(interface_number)?;
+    let device = selected_device.ok_or_else(|| anyhow!("No supported controller found!"))?;
+    let handle = device.open().map_err(|e| anyhow!("Failed to open device: {:?}", e))?;
     
-    // Xbox controller Initialization Magic
+    let (interface_num, endpoint_in, endpoint_out) = if controller_type == ControllerType::Xbox {
+        (0, 0x81, 0x01)
+    } else {
+        (3, 0x81, 0x01)
+    };
+
+    handle.claim_interface(interface_num).map_err(|e| anyhow!("Failed to claim interface: {:?}", e))?;
+    
+    let default_setup = TransferSetup {
+        bm_request_type: 0,
+        b_request: 0,
+        w_value: 0,
+        w_index: 0,
+    };
+
     if controller_type == ControllerType::Xbox {
-        let endpoint_out = endpoint_out.ok_or_else(|| anyhow!("Could not find OUT endpoint for Xbox init"))?;
-        let _ = handle.write_interrupt(endpoint_out, &[0x05, 0x20, 0x00, 0x01, 0x00], Duration::from_millis(1000));
+        // Initialization Magic for Xbox using OUT transfer
+        let opts = TransferOptions {
+            endpoint: endpoint_out,
+            timeout_ms: 1000,
+            stream_id: 0,
+            iso_packets: 0,
+        };
+        let xfer = handle.new_transfer(TransferType::Interrupt, default_setup, 5, opts)
+            .map_err(|e| anyhow!("Failed to create init transfer: {:?}", e))?;
+        let _ = xfer.submit_transfer(&vec![0x05, 0x20, 0x00, 0x01, 0x00]);
+        let _ = await_transfer(xfer);
     }
 
     let mut maze = [
@@ -333,7 +314,6 @@ pub fn run() -> anyhow::Result<()> {
 
     let mut current_pos = (6, 11);
     let mut button_down = false;
-    let mut buf = [0u8; 64]; // Fits typically ~64 byte PS5 or Xbox packets
 
     print!("\x1B[2J");
     print!("\x1B[H");
@@ -342,58 +322,59 @@ pub fn run() -> anyhow::Result<()> {
     io::stdout().flush()?;
 
     loop {
-        // We use a short timeout so that when no data is sent, the game doesn't hang gracefully
-        match handle.read_interrupt(endpoint_in, &mut buf, Duration::from_millis(10)) {
-            Ok(bytes_read) => {
+        let opts = TransferOptions {
+            endpoint: endpoint_in,
+            timeout_ms: 1000,
+            stream_id: 0,
+            iso_packets: 0,
+        };
+        let xfer = handle.new_transfer(TransferType::Interrupt, default_setup, 64, opts)
+            .map_err(|e| anyhow!("Failed to create transfer: {:?}", e))?;
+        
+        let _ = xfer.submit_transfer(&vec![]); // Submitting an empty buffer for an IN transfer
+        let result = await_transfer(xfer);
+
+        match result {
+            Ok(data) => {
                 let state = if controller_type == ControllerType::Xbox {
-                    parse_xbox_controller_data(&buf[0..bytes_read])
+                    parse_xbox_controller_data(&data)
                 } else {
-                    parse_ps5_controller_data(&buf[0..bytes_read])
+                    parse_ps5_controller_data(&data)
                 };
 
                 // Clear screen and home cursor
                 print!("\x1B[2J");
                 print!("\x1B[H");
                 
-                // You can uncomment this to debug the controller mapping:
-                // println!("{:?}", &buf[0..bytes_read]);
-                
                 print_maze(&maze);
 
                 if !button_down {
                     if state.right {
                         button_down = true;
-
                         if maze[current_pos.0][current_pos.1 + 1] != WALL {
                             maze[current_pos.0][current_pos.1] = EMPTY;
                             current_pos.1 += 1;
                             maze[current_pos.0][current_pos.1] = PACMAN;
                         }
                     }
-
                     if state.left {
                         button_down = true;
-
                         if maze[current_pos.0][current_pos.1 - 1] != WALL {
                             maze[current_pos.0][current_pos.1] = EMPTY;
                             current_pos.1 -= 1;
                             maze[current_pos.0][current_pos.1] = PACMAN;
                         }
                     }
-
                     if state.up {
                         button_down = true;
-
                         if maze[current_pos.0 - 1][current_pos.1] != WALL {
                             maze[current_pos.0][current_pos.1] = EMPTY;
                             current_pos.0 -= 1;
                             maze[current_pos.0][current_pos.1] = PACMAN;
                         }
                     }
-
                     if state.down {
                         button_down = true;
-
                         if maze[current_pos.0 + 1][current_pos.1] != WALL {
                             maze[current_pos.0][current_pos.1] = EMPTY;
                             current_pos.0 += 1;
@@ -406,13 +387,9 @@ pub fn run() -> anyhow::Result<()> {
 
                 io::stdout().flush()?;
             }
-            Err(rusb::Error::Timeout) => {
-                // Ignore timeouts, just loop around. This ensures we don't crash when inactive.
-                continue;
-            }
-            Err(e) => {
-                // Return if there was an actual communication error (e.g. disconnected)
-                return Err(anyhow!("USB Read Error: {}", e));
+            Err(_) => {
+                // Return if there was an actual communication error
+                return Err(anyhow!("USB Read Error"));
             }
         }
     }
@@ -428,4 +405,3 @@ pub extern "C" fn exports_wasi_cli_run_run() -> bool {
         }
     }
 }
-

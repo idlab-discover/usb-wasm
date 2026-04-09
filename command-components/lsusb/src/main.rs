@@ -1,6 +1,6 @@
 use usb_wasm_bindings::{
     descriptors::{ConfigurationDescriptor, DeviceDescriptor, EndpointDescriptor, InterfaceDescriptor},
-    device::{list_devices, UsbDevice},
+    device::list_devices,
 };
 
 fn class_to_string(class: u8) -> &'static str {

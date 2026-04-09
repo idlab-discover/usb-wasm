@@ -3,23 +3,18 @@
 
 //! Webcam Computer Vision Component
 //!
-//! This component provides functionality for capturing frames from a webcam
-//! using WASI-USB and exposing them through the WASI-CV interface.
+//! Captures UVC frames entirely in-guest (negotiation, isochronous reassembly)
+//! and exports them via the `frame-stream` WIT resource.
 
 pub mod webcam;
 
-#[allow(dead_code)]
-pub mod bindings {
-    wit_bindgen::generate!({
-        path: "../../wit",
-        world: "cv-world",
-    });
-}
+#[cfg(target_family = "wasm")]
+pub use usb_wasm_bindings as bindings;
 
 #[cfg(target_family = "wasm")]
 mod wasm_component {
     use super::bindings;
-    use bindings::exports::component::usb::cv::{Guest, GuestFrameStream, GuestObjectDetector, Frame, Detection};
+    use bindings::exports::component::usb::cv::Guest;
     use bindings::exports::wasi::cli::run::Guest as RunGuest;
 
     struct WebcamComponent;
@@ -27,14 +22,6 @@ mod wasm_component {
     impl Guest for WebcamComponent {
         type FrameStream = super::webcam::WebcamFrameStream;
         type ObjectDetector = super::webcam::UnimplementedObjectDetector;
-
-        fn open_webcam() -> Result<Self::FrameStream, String> {
-            super::webcam::open_webcam_stream()
-        }
-
-        fn create_object_detector(_model: String) -> Result<Self::ObjectDetector, String> {
-            Err("Object detection not implemented in this component".to_string())
-        }
     }
 
     impl RunGuest for WebcamComponent {

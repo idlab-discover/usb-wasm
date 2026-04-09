@@ -278,7 +278,7 @@ pub mod component {
                 }
             }
 
-            /// ── Isochronous extensions ──────────────────────────────────────────────
+            /// ── Isochronous packet metadata ──────────────────────────────────────────
             /// Status of a single isochronous packet within a transfer.
             #[repr(u8)]
             #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
@@ -353,17 +353,18 @@ pub mod component {
                         .finish()
                 }
             }
-            /// Full result of an isochronous transfer.
-            /// `data` is the flat buffer (packet-size * num-packets bytes).
-            /// `packets` describes actual-length per packet so callers can slice correctly.
+            /// Unified result of a USB transfer.
+            /// `data` is the raw buffer.
+            /// `packets` is non-empty only for isochronous transfers; guests use it
+            /// to slice the flat buffer into per-packet payloads.
             #[derive(Clone)]
-            pub struct IsoResult {
+            pub struct TransferResult {
                 pub data: _rt::Vec<u8>,
                 pub packets: _rt::Vec<IsoPacket>,
             }
-            impl ::core::fmt::Debug for IsoResult {
+            impl ::core::fmt::Debug for TransferResult {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    f.debug_struct("IsoResult")
+                    f.debug_struct("TransferResult")
                         .field("data", &self.data)
                         .field("packets", &self.packets)
                         .finish()
@@ -461,71 +462,11 @@ pub mod component {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            /// Wait for the transfer to complete (bulk/interrupt/control).
-            /// Returns Ok(data) on success, or an error code on failure.
+            /// Wait for any transfer to complete (control, bulk, interrupt, or isochronous).
+            /// For isochronous transfers, `transfer-result.packets` contains per-packet metadata.
+            /// For all other transfer types, `packets` is empty.
             #[allow(async_fn_in_trait)]
-            pub fn await_transfer(xfer: Transfer) -> Result<_rt::Vec<u8>, LibusbError> {
-                unsafe {
-                    #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
-                    #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
-                    struct RetArea(
-                        [::core::mem::MaybeUninit<u8>; 3 * ::core::mem::size_of::<*const u8>()],
-                    );
-                    let mut ret_area = RetArea(
-                        [::core::mem::MaybeUninit::uninit();
-                            3 * ::core::mem::size_of::<*const u8>()],
-                    );
-                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "component:usb/transfers@0.2.1")]
-                    unsafe extern "C" {
-                        #[link_name = "await-transfer"]
-                        fn wit_import1(_: i32, _: *mut u8);
-                    }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    unsafe extern "C" fn wit_import1(_: i32, _: *mut u8) {
-                        unreachable!()
-                    }
-                    wit_import1((&xfer).take_handle() as i32, ptr0);
-                    let l2 = i32::from(*ptr0.add(0).cast::<u8>());
-                    let result7 = match l2 {
-                        0 => {
-                            let e = {
-                                let l3 = *ptr0
-                                    .add(::core::mem::size_of::<*const u8>())
-                                    .cast::<*mut u8>();
-                                let l4 = *ptr0
-                                    .add(2 * ::core::mem::size_of::<*const u8>())
-                                    .cast::<usize>();
-                                let len5 = l4;
-
-                                _rt::Vec::from_raw_parts(l3.cast(), len5, len5)
-                            };
-                            Ok(e)
-                        }
-                        1 => {
-                            let e = {
-                                let l6 = i32::from(
-                                    *ptr0.add(::core::mem::size_of::<*const u8>()).cast::<u8>(),
-                                );
-
-                                super::super::super::component::usb::errors::LibusbError::_lift(
-                                    l6 as u8,
-                                )
-                            };
-                            Err(e)
-                        }
-                        _ => _rt::invalid_enum_discriminant(),
-                    };
-                    result7
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            /// Like await-transfer but for isochronous transfers.
-            /// Returns per-packet metadata alongside the raw data buffer.
-            #[allow(async_fn_in_trait)]
-            pub fn await_iso_transfer(xfer: Transfer) -> Result<IsoResult, LibusbError> {
+            pub fn await_transfer(xfer: Transfer) -> Result<TransferResult, LibusbError> {
                 unsafe {
                     #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
                     #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
@@ -540,7 +481,7 @@ pub mod component {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "component:usb/transfers@0.2.1")]
                     unsafe extern "C" {
-                        #[link_name = "await-iso-transfer"]
+                        #[link_name = "await-transfer"]
                         fn wit_import1(_: i32, _: *mut u8);
                     }
 
@@ -584,7 +525,7 @@ pub mod component {
                                 }
                                 _rt::cabi_dealloc(base10, len10 * 8, 4);
 
-                                IsoResult {
+                                TransferResult {
                                     data: _rt::Vec::from_raw_parts(l3.cast(), len5, len5),
                                     packets: result10,
                                 }
@@ -2650,6 +2591,9 @@ pub mod component {
                         .finish()
                 }
             }
+            /// Frame-stream resource. The host does NOT implement this — it is implemented
+            /// by the webcam-cv guest component, which performs all UVC negotiation and
+            /// isochronous reassembly in Wasm using the generic `await-transfer`.
 
             #[derive(Debug)]
             #[repr(transparent)]
@@ -2694,6 +2638,10 @@ pub mod component {
                     }
                 }
             }
+
+            /// Host-side YOLO object detector. The host runs inference natively
+            /// (tract-onnx) for maximum performance. Any guest can pass it an
+            /// assembled frame regardless of the capture device used.
 
             #[derive(Debug)]
             #[repr(transparent)]
@@ -3009,6 +2957,2386 @@ pub mod component {
         }
     }
 }
+#[allow(dead_code, clippy::all)]
+pub mod wasi {
+    pub mod cli {
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod environment {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            use super::super::super::_rt;
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get the POSIX-style environment variables.
+            ///
+            /// Each environment variable is provided as a pair of string variable names
+            /// and string value.
+            ///
+            /// Morally, these are a value import, but until value imports are available
+            /// in the component model, this import function should return the same
+            /// values each time it is called.
+            #[allow(async_fn_in_trait)]
+            pub fn get_environment() -> _rt::Vec<(_rt::String, _rt::String)> {
+                unsafe {
+                    #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                    #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                    struct RetArea(
+                        [::core::mem::MaybeUninit<u8>; 2 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let mut ret_area = RetArea(
+                        [::core::mem::MaybeUninit::uninit();
+                            2 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:cli/environment@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "get-environment"]
+                        fn wit_import1(_: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import1(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import1(ptr0);
+                    let l2 = *ptr0.add(0).cast::<*mut u8>();
+                    let l3 = *ptr0
+                        .add(::core::mem::size_of::<*const u8>())
+                        .cast::<usize>();
+                    let base10 = l2;
+                    let len10 = l3;
+                    let mut result10 = _rt::Vec::with_capacity(len10);
+                    for i in 0..len10 {
+                        let base = base10.add(i * (4 * ::core::mem::size_of::<*const u8>()));
+                        let e10 = {
+                            let l4 = *base.add(0).cast::<*mut u8>();
+                            let l5 = *base
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            let len6 = l5;
+                            let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
+                            let l7 = *base
+                                .add(2 * ::core::mem::size_of::<*const u8>())
+                                .cast::<*mut u8>();
+                            let l8 = *base
+                                .add(3 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            let len9 = l8;
+                            let bytes9 = _rt::Vec::from_raw_parts(l7.cast(), len9, len9);
+
+                            (_rt::string_lift(bytes6), _rt::string_lift(bytes9))
+                        };
+                        result10.push(e10);
+                    }
+                    _rt::cabi_dealloc(
+                        base10,
+                        len10 * (4 * ::core::mem::size_of::<*const u8>()),
+                        ::core::mem::size_of::<*const u8>(),
+                    );
+                    let result11 = result10;
+                    result11
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get the POSIX-style arguments to the program.
+            #[allow(async_fn_in_trait)]
+            pub fn get_arguments() -> _rt::Vec<_rt::String> {
+                unsafe {
+                    #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                    #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                    struct RetArea(
+                        [::core::mem::MaybeUninit<u8>; 2 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let mut ret_area = RetArea(
+                        [::core::mem::MaybeUninit::uninit();
+                            2 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:cli/environment@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "get-arguments"]
+                        fn wit_import1(_: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import1(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import1(ptr0);
+                    let l2 = *ptr0.add(0).cast::<*mut u8>();
+                    let l3 = *ptr0
+                        .add(::core::mem::size_of::<*const u8>())
+                        .cast::<usize>();
+                    let base7 = l2;
+                    let len7 = l3;
+                    let mut result7 = _rt::Vec::with_capacity(len7);
+                    for i in 0..len7 {
+                        let base = base7.add(i * (2 * ::core::mem::size_of::<*const u8>()));
+                        let e7 = {
+                            let l4 = *base.add(0).cast::<*mut u8>();
+                            let l5 = *base
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            let len6 = l5;
+                            let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
+
+                            _rt::string_lift(bytes6)
+                        };
+                        result7.push(e7);
+                    }
+                    _rt::cabi_dealloc(
+                        base7,
+                        len7 * (2 * ::core::mem::size_of::<*const u8>()),
+                        ::core::mem::size_of::<*const u8>(),
+                    );
+                    let result8 = result7;
+                    result8
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Return a path that programs should use as their initial current working
+            /// directory, interpreting `.` as shorthand for this.
+            #[allow(async_fn_in_trait)]
+            pub fn initial_cwd() -> Option<_rt::String> {
+                unsafe {
+                    #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                    #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                    struct RetArea(
+                        [::core::mem::MaybeUninit<u8>; 3 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let mut ret_area = RetArea(
+                        [::core::mem::MaybeUninit::uninit();
+                            3 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:cli/environment@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "initial-cwd"]
+                        fn wit_import1(_: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import1(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import1(ptr0);
+                    let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                    let result6 = match l2 {
+                        0 => None,
+                        1 => {
+                            let e = {
+                                let l3 = *ptr0
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l4 = *ptr0
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                let len5 = l4;
+                                let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
+
+                                _rt::string_lift(bytes5)
+                            };
+                            Some(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    };
+                    result6
+                }
+            }
+        }
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod exit {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            #[allow(unused_unsafe, clippy::all)]
+            /// Exit the current instance and any linked instances.
+            #[allow(async_fn_in_trait)]
+            pub fn exit(status: Result<(), ()>) -> () {
+                unsafe {
+                    let result0 = match status {
+                        Ok(_) => 0i32,
+                        Err(_) => 1i32,
+                    };
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:cli/exit@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "exit"]
+                        fn wit_import1(_: i32);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import1(_: i32) {
+                        unreachable!()
+                    }
+                    wit_import1(result0);
+                }
+            }
+        }
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod stderr {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            pub type OutputStream = super::super::super::wasi::io::streams::OutputStream;
+            #[allow(unused_unsafe, clippy::all)]
+            #[allow(async_fn_in_trait)]
+            pub fn get_stderr() -> OutputStream {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:cli/stderr@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "get-stderr"]
+                        fn wit_import0() -> i32;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import0() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import0();
+                    super::super::super::wasi::io::streams::OutputStream::from_handle(ret as u32)
+                }
+            }
+        }
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod stdin {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            pub type InputStream = super::super::super::wasi::io::streams::InputStream;
+            #[allow(unused_unsafe, clippy::all)]
+            #[allow(async_fn_in_trait)]
+            pub fn get_stdin() -> InputStream {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:cli/stdin@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "get-stdin"]
+                        fn wit_import0() -> i32;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import0() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import0();
+                    super::super::super::wasi::io::streams::InputStream::from_handle(ret as u32)
+                }
+            }
+        }
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod stdout {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            pub type OutputStream = super::super::super::wasi::io::streams::OutputStream;
+            #[allow(unused_unsafe, clippy::all)]
+            #[allow(async_fn_in_trait)]
+            pub fn get_stdout() -> OutputStream {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:cli/stdout@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "get-stdout"]
+                        fn wit_import0() -> i32;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import0() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import0();
+                    super::super::super::wasi::io::streams::OutputStream::from_handle(ret as u32)
+                }
+            }
+        }
+    }
+    pub mod io {
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod error {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            use super::super::super::_rt;
+
+            #[derive(Debug)]
+            #[repr(transparent)]
+            pub struct Error {
+                handle: _rt::Resource<Error>,
+            }
+
+            impl Error {
+                #[doc(hidden)]
+                pub unsafe fn from_handle(handle: u32) -> Self {
+                    Self {
+                        handle: unsafe { _rt::Resource::from_handle(handle) },
+                    }
+                }
+
+                #[doc(hidden)]
+                pub fn take_handle(&self) -> u32 {
+                    _rt::Resource::take_handle(&self.handle)
+                }
+
+                #[doc(hidden)]
+                pub fn handle(&self) -> u32 {
+                    _rt::Resource::handle(&self.handle)
+                }
+            }
+
+            unsafe impl _rt::WasmResource for Error {
+                #[inline]
+                unsafe fn drop(_handle: u32) {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unreachable!();
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        #[link(wasm_import_module = "wasi:io/error@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[resource-drop]error"]
+                            fn drop(_: u32);
+                        }
+
+                        unsafe { drop(_handle) };
+                    }
+                }
+            }
+
+            impl Error {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn to_debug_string(&self) -> _rt::String {
+                    unsafe {
+                        #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                        #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<u8>; 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit();
+                                2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/error@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]error.to-debug-string"]
+                            fn wit_import1(_: i32, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, ptr0);
+                        let l2 = *ptr0.add(0).cast::<*mut u8>();
+                        let l3 = *ptr0
+                            .add(::core::mem::size_of::<*const u8>())
+                            .cast::<usize>();
+                        let len4 = l3;
+                        let bytes4 = _rt::Vec::from_raw_parts(l2.cast(), len4, len4);
+                        let result5 = _rt::string_lift(bytes4);
+                        result5
+                    }
+                }
+            }
+        }
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod poll {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            use super::super::super::_rt;
+
+            #[derive(Debug)]
+            #[repr(transparent)]
+            pub struct Pollable {
+                handle: _rt::Resource<Pollable>,
+            }
+
+            impl Pollable {
+                #[doc(hidden)]
+                pub unsafe fn from_handle(handle: u32) -> Self {
+                    Self {
+                        handle: unsafe { _rt::Resource::from_handle(handle) },
+                    }
+                }
+
+                #[doc(hidden)]
+                pub fn take_handle(&self) -> u32 {
+                    _rt::Resource::take_handle(&self.handle)
+                }
+
+                #[doc(hidden)]
+                pub fn handle(&self) -> u32 {
+                    _rt::Resource::handle(&self.handle)
+                }
+            }
+
+            unsafe impl _rt::WasmResource for Pollable {
+                #[inline]
+                unsafe fn drop(_handle: u32) {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unreachable!();
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        #[link(wasm_import_module = "wasi:io/poll@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[resource-drop]pollable"]
+                            fn drop(_: u32);
+                        }
+
+                        unsafe { drop(_handle) };
+                    }
+                }
+            }
+
+            impl Pollable {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn ready(&self) -> bool {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/poll@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]pollable.ready"]
+                            fn wit_import0(_: i32) -> i32;
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import0(_: i32) -> i32 {
+                            unreachable!()
+                        }
+                        let ret = wit_import0((self).handle() as i32);
+                        _rt::bool_lift(ret as u8)
+                    }
+                }
+            }
+            impl Pollable {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn block(&self) -> () {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/poll@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]pollable.block"]
+                            fn wit_import0(_: i32);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import0(_: i32) {
+                            unreachable!()
+                        }
+                        wit_import0((self).handle() as i32);
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            #[allow(async_fn_in_trait)]
+            pub fn poll(in_: &[&Pollable]) -> _rt::Vec<u32> {
+                unsafe {
+                    #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                    #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                    struct RetArea(
+                        [::core::mem::MaybeUninit<u8>; 2 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let mut ret_area = RetArea(
+                        [::core::mem::MaybeUninit::uninit();
+                            2 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let vec0 = in_;
+                    let len0 = vec0.len();
+                    let layout0 = _rt::alloc::Layout::from_size_align(vec0.len() * 4, 4).unwrap();
+                    let (result0, _cleanup0) = wit_bindgen::rt::Cleanup::new(layout0);
+                    for (i, e) in vec0.into_iter().enumerate() {
+                        let base = result0.add(i * 4);
+                        {
+                            *base.add(0).cast::<i32>() = (e).handle() as i32;
+                        }
+                    }
+                    let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:io/poll@0.2.5")]
+                    unsafe extern "C" {
+                        #[link_name = "poll"]
+                        fn wit_import2(_: *mut u8, _: usize, _: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import2(_: *mut u8, _: usize, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import2(result0, len0, ptr1);
+                    let l3 = *ptr1.add(0).cast::<*mut u8>();
+                    let l4 = *ptr1
+                        .add(::core::mem::size_of::<*const u8>())
+                        .cast::<usize>();
+                    let len5 = l4;
+                    let result6 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
+                    result6
+                }
+            }
+        }
+
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod streams {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+
+            use super::super::super::_rt;
+            pub type Error = super::super::super::wasi::io::error::Error;
+            pub type Pollable = super::super::super::wasi::io::poll::Pollable;
+            pub enum StreamError {
+                LastOperationFailed(Error),
+                Closed,
+            }
+            impl ::core::fmt::Debug for StreamError {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        StreamError::LastOperationFailed(e) => f
+                            .debug_tuple("StreamError::LastOperationFailed")
+                            .field(e)
+                            .finish(),
+                        StreamError::Closed => f.debug_tuple("StreamError::Closed").finish(),
+                    }
+                }
+            }
+            impl ::core::fmt::Display for StreamError {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    write!(f, "{:?}", self)
+                }
+            }
+
+            #[cfg(feature = "std")]
+            impl std::error::Error for StreamError {}
+
+            #[derive(Debug)]
+            #[repr(transparent)]
+            pub struct InputStream {
+                handle: _rt::Resource<InputStream>,
+            }
+
+            impl InputStream {
+                #[doc(hidden)]
+                pub unsafe fn from_handle(handle: u32) -> Self {
+                    Self {
+                        handle: unsafe { _rt::Resource::from_handle(handle) },
+                    }
+                }
+
+                #[doc(hidden)]
+                pub fn take_handle(&self) -> u32 {
+                    _rt::Resource::take_handle(&self.handle)
+                }
+
+                #[doc(hidden)]
+                pub fn handle(&self) -> u32 {
+                    _rt::Resource::handle(&self.handle)
+                }
+            }
+
+            unsafe impl _rt::WasmResource for InputStream {
+                #[inline]
+                unsafe fn drop(_handle: u32) {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unreachable!();
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[resource-drop]input-stream"]
+                            fn drop(_: u32);
+                        }
+
+                        unsafe { drop(_handle) };
+                    }
+                }
+            }
+
+            #[derive(Debug)]
+            #[repr(transparent)]
+            pub struct OutputStream {
+                handle: _rt::Resource<OutputStream>,
+            }
+
+            impl OutputStream {
+                #[doc(hidden)]
+                pub unsafe fn from_handle(handle: u32) -> Self {
+                    Self {
+                        handle: unsafe { _rt::Resource::from_handle(handle) },
+                    }
+                }
+
+                #[doc(hidden)]
+                pub fn take_handle(&self) -> u32 {
+                    _rt::Resource::take_handle(&self.handle)
+                }
+
+                #[doc(hidden)]
+                pub fn handle(&self) -> u32 {
+                    _rt::Resource::handle(&self.handle)
+                }
+            }
+
+            unsafe impl _rt::WasmResource for OutputStream {
+                #[inline]
+                unsafe fn drop(_handle: u32) {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unreachable!();
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[resource-drop]output-stream"]
+                            fn drop(_: u32);
+                        }
+
+                        unsafe { drop(_handle) };
+                    }
+                }
+            }
+
+            impl InputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn read(&self, len: u64) -> Result<_rt::Vec<u8>, StreamError> {
+                    unsafe {
+                        #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                        #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<u8>; 3 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit();
+                                3 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]input-stream.read"]
+                            fn wit_import1(_: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, _rt::as_i64(&len), ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result9 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0
+                                        .add(::core::mem::size_of::<*const u8>())
+                                        .cast::<*mut u8>();
+                                    let l4 = *ptr0
+                                        .add(2 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len5 = l4;
+
+                                    _rt::Vec::from_raw_parts(l3.cast(), len5, len5)
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l6 = i32::from(
+                                        *ptr0.add(::core::mem::size_of::<*const u8>()).cast::<u8>(),
+                                    );
+                                    let v8 = match l6 {
+                                        0 => {
+                                            let e8 = {
+                                                let l7 = *ptr0
+                                                    .add(
+                                                        4 + 1 * ::core::mem::size_of::<*const u8>(),
+                                                    )
+                                                    .cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l7 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e8)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v8
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result9
+                    }
+                }
+            }
+            impl InputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn blocking_read(&self, len: u64) -> Result<_rt::Vec<u8>, StreamError> {
+                    unsafe {
+                        #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                        #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<u8>; 3 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit();
+                                3 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]input-stream.blocking-read"]
+                            fn wit_import1(_: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, _rt::as_i64(&len), ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result9 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0
+                                        .add(::core::mem::size_of::<*const u8>())
+                                        .cast::<*mut u8>();
+                                    let l4 = *ptr0
+                                        .add(2 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len5 = l4;
+
+                                    _rt::Vec::from_raw_parts(l3.cast(), len5, len5)
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l6 = i32::from(
+                                        *ptr0.add(::core::mem::size_of::<*const u8>()).cast::<u8>(),
+                                    );
+                                    let v8 = match l6 {
+                                        0 => {
+                                            let e8 = {
+                                                let l7 = *ptr0
+                                                    .add(
+                                                        4 + 1 * ::core::mem::size_of::<*const u8>(),
+                                                    )
+                                                    .cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l7 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e8)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v8
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result9
+                    }
+                }
+            }
+            impl InputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn skip(&self, len: u64) -> Result<u64, StreamError> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]input-stream.skip"]
+                            fn wit_import1(_: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, _rt::as_i64(&len), ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = i32::from(*ptr0.add(8).cast::<u8>());
+                                    let v6 = match l4 {
+                                        0 => {
+                                            let e6 = {
+                                                let l5 = *ptr0.add(12).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l5 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e6)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v6
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl InputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn blocking_skip(&self, len: u64) -> Result<u64, StreamError> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]input-stream.blocking-skip"]
+                            fn wit_import1(_: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, _rt::as_i64(&len), ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = i32::from(*ptr0.add(8).cast::<u8>());
+                                    let v6 = match l4 {
+                                        0 => {
+                                            let e6 = {
+                                                let l5 = *ptr0.add(12).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l5 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e6)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v6
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl InputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn subscribe(&self) -> Pollable {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]input-stream.subscribe"]
+                            fn wit_import0(_: i32) -> i32;
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import0(_: i32) -> i32 {
+                            unreachable!()
+                        }
+                        let ret = wit_import0((self).handle() as i32);
+                        super::super::super::wasi::io::poll::Pollable::from_handle(ret as u32)
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn check_write(&self) -> Result<u64, StreamError> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.check-write"]
+                            fn wit_import1(_: i32, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = i32::from(*ptr0.add(8).cast::<u8>());
+                                    let v6 = match l4 {
+                                        0 => {
+                                            let e6 = {
+                                                let l5 = *ptr0.add(12).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l5 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e6)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v6
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn write(&self, contents: &[u8]) -> Result<(), StreamError> {
+                    unsafe {
+                        #[repr(align(4))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                        let vec0 = contents;
+                        let ptr0 = vec0.as_ptr().cast::<u8>();
+                        let len0 = vec0.len();
+                        let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.write"]
+                            fn wit_import2(_: i32, _: *mut u8, _: usize, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import2(_: i32, _: *mut u8, _: usize, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import2((self).handle() as i32, ptr0.cast_mut(), len0, ptr1);
+                        let l3 = i32::from(*ptr1.add(0).cast::<u8>());
+                        let result7 = match l3 {
+                            0 => {
+                                let e = ();
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = i32::from(*ptr1.add(4).cast::<u8>());
+                                    let v6 = match l4 {
+                                        0 => {
+                                            let e6 = {
+                                                let l5 = *ptr1.add(8).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l5 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e6)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v6
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn blocking_write_and_flush(&self, contents: &[u8]) -> Result<(), StreamError> {
+                    unsafe {
+                        #[repr(align(4))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                        let vec0 = contents;
+                        let ptr0 = vec0.as_ptr().cast::<u8>();
+                        let len0 = vec0.len();
+                        let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.blocking-write-and-flush"]
+                            fn wit_import2(_: i32, _: *mut u8, _: usize, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import2(_: i32, _: *mut u8, _: usize, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import2((self).handle() as i32, ptr0.cast_mut(), len0, ptr1);
+                        let l3 = i32::from(*ptr1.add(0).cast::<u8>());
+                        let result7 = match l3 {
+                            0 => {
+                                let e = ();
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = i32::from(*ptr1.add(4).cast::<u8>());
+                                    let v6 = match l4 {
+                                        0 => {
+                                            let e6 = {
+                                                let l5 = *ptr1.add(8).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l5 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e6)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v6
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn flush(&self) -> Result<(), StreamError> {
+                    unsafe {
+                        #[repr(align(4))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.flush"]
+                            fn wit_import1(_: i32, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result6 = match l2 {
+                            0 => {
+                                let e = ();
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l3 = i32::from(*ptr0.add(4).cast::<u8>());
+                                    let v5 = match l3 {
+                                        0 => {
+                                            let e5 = {
+                                                let l4 = *ptr0.add(8).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l4 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e5)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v5
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result6
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn blocking_flush(&self) -> Result<(), StreamError> {
+                    unsafe {
+                        #[repr(align(4))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.blocking-flush"]
+                            fn wit_import1(_: i32, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result6 = match l2 {
+                            0 => {
+                                let e = ();
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l3 = i32::from(*ptr0.add(4).cast::<u8>());
+                                    let v5 = match l3 {
+                                        0 => {
+                                            let e5 = {
+                                                let l4 = *ptr0.add(8).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l4 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e5)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v5
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result6
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn subscribe(&self) -> Pollable {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.subscribe"]
+                            fn wit_import0(_: i32) -> i32;
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import0(_: i32) -> i32 {
+                            unreachable!()
+                        }
+                        let ret = wit_import0((self).handle() as i32);
+                        super::super::super::wasi::io::poll::Pollable::from_handle(ret as u32)
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn write_zeroes(&self, len: u64) -> Result<(), StreamError> {
+                    unsafe {
+                        #[repr(align(4))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.write-zeroes"]
+                            fn wit_import1(_: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, _rt::as_i64(&len), ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result6 = match l2 {
+                            0 => {
+                                let e = ();
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l3 = i32::from(*ptr0.add(4).cast::<u8>());
+                                    let v5 = match l3 {
+                                        0 => {
+                                            let e5 = {
+                                                let l4 = *ptr0.add(8).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l4 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e5)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v5
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result6
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn blocking_write_zeroes_and_flush(&self, len: u64) -> Result<(), StreamError> {
+                    unsafe {
+                        #[repr(align(4))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.blocking-write-zeroes-and-flush"]
+                            fn wit_import1(_: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1((self).handle() as i32, _rt::as_i64(&len), ptr0);
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result6 = match l2 {
+                            0 => {
+                                let e = ();
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l3 = i32::from(*ptr0.add(4).cast::<u8>());
+                                    let v5 = match l3 {
+                                        0 => {
+                                            let e5 = {
+                                                let l4 = *ptr0.add(8).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l4 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e5)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v5
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result6
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn splice(&self, src: &InputStream, len: u64) -> Result<u64, StreamError> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.splice"]
+                            fn wit_import1(_: i32, _: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1(
+                            (self).handle() as i32,
+                            (src).handle() as i32,
+                            _rt::as_i64(&len),
+                            ptr0,
+                        );
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = i32::from(*ptr0.add(8).cast::<u8>());
+                                    let v6 = match l4 {
+                                        0 => {
+                                            let e6 = {
+                                                let l5 = *ptr0.add(12).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l5 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e6)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v6
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl OutputStream {
+                #[allow(unused_unsafe, clippy::all)]
+                #[allow(async_fn_in_trait)]
+                pub fn blocking_splice(
+                    &self,
+                    src: &InputStream,
+                    len: u64,
+                ) -> Result<u64, StreamError> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "wasi:io/streams@0.2.5")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]output-stream.blocking-splice"]
+                            fn wit_import1(_: i32, _: i32, _: i64, _: *mut u8);
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(_: i32, _: i32, _: i64, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import1(
+                            (self).handle() as i32,
+                            (src).handle() as i32,
+                            _rt::as_i64(&len),
+                            ptr0,
+                        );
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = i32::from(*ptr0.add(8).cast::<u8>());
+                                    let v6 = match l4 {
+                                        0 => {
+                                            let e6 = {
+                                                let l5 = *ptr0.add(12).cast::<i32>();
+
+                                                super::super::super::wasi::io::error::Error::from_handle(l5 as u32)
+                                            };
+                                            StreamError::LastOperationFailed(e6)
+                                        }
+                                        n => {
+                                            debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                            StreamError::Closed
+                                        }
+                                    };
+
+                                    v6
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+        }
+    }
+}
+#[allow(dead_code, clippy::all)]
+pub mod exports {
+    pub mod component {
+        pub mod usb {
+
+            #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+            pub mod cv {
+                #[used]
+                #[doc(hidden)]
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
+
+                use super::super::super::super::_rt;
+                #[repr(C)]
+                #[derive(Clone, Copy)]
+                pub struct Point {
+                    pub x: u32,
+                    pub y: u32,
+                }
+                impl ::core::fmt::Debug for Point {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        f.debug_struct("Point")
+                            .field("x", &self.x)
+                            .field("y", &self.y)
+                            .finish()
+                    }
+                }
+                #[repr(C)]
+                #[derive(Clone, Copy)]
+                pub struct Size {
+                    pub width: u32,
+                    pub height: u32,
+                }
+                impl ::core::fmt::Debug for Size {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        f.debug_struct("Size")
+                            .field("width", &self.width)
+                            .field("height", &self.height)
+                            .finish()
+                    }
+                }
+                #[repr(C)]
+                #[derive(Clone, Copy)]
+                pub struct BoundingBox {
+                    pub origin: Point,
+                    pub size: Size,
+                }
+                impl ::core::fmt::Debug for BoundingBox {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        f.debug_struct("BoundingBox")
+                            .field("origin", &self.origin)
+                            .field("size", &self.size)
+                            .finish()
+                    }
+                }
+                #[derive(Clone)]
+                pub struct Detection {
+                    pub label: _rt::String,
+                    pub confidence: f32,
+                    pub box_: BoundingBox,
+                }
+                impl ::core::fmt::Debug for Detection {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        f.debug_struct("Detection")
+                            .field("label", &self.label)
+                            .field("confidence", &self.confidence)
+                            .field("box", &self.box_)
+                            .finish()
+                    }
+                }
+                #[derive(Clone)]
+                pub struct Frame {
+                    pub data: _rt::Vec<u8>,
+                    pub width: u32,
+                    pub height: u32,
+                }
+                impl ::core::fmt::Debug for Frame {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        f.debug_struct("Frame")
+                            .field("data", &self.data)
+                            .field("width", &self.width)
+                            .field("height", &self.height)
+                            .finish()
+                    }
+                }
+                /// Frame-stream resource. The host does NOT implement this — it is implemented
+                /// by the webcam-cv guest component, which performs all UVC negotiation and
+                /// isochronous reassembly in Wasm using the generic `await-transfer`.
+
+                #[derive(Debug)]
+                #[repr(transparent)]
+                pub struct FrameStream {
+                    handle: _rt::Resource<FrameStream>,
+                }
+
+                type _FrameStreamRep<T> = Option<T>;
+
+                impl FrameStream {
+                    /// Creates a new resource from the specified representation.
+                    ///
+                    /// This function will create a new resource handle by moving `val` onto
+                    /// the heap and then passing that heap pointer to the component model to
+                    /// create a handle. The owned handle is then returned as `FrameStream`.
+                    pub fn new<T: GuestFrameStream>(val: T) -> Self {
+                        Self::type_guard::<T>();
+                        let val: _FrameStreamRep<T> = Some(val);
+                        let ptr: *mut _FrameStreamRep<T> = _rt::Box::into_raw(_rt::Box::new(val));
+                        unsafe { Self::from_handle(T::_resource_new(ptr.cast())) }
+                    }
+
+                    /// Gets access to the underlying `T` which represents this resource.
+                    pub fn get<T: GuestFrameStream>(&self) -> &T {
+                        let ptr = unsafe { &*self.as_ptr::<T>() };
+                        ptr.as_ref().unwrap()
+                    }
+
+                    /// Gets mutable access to the underlying `T` which represents this
+                    /// resource.
+                    pub fn get_mut<T: GuestFrameStream>(&mut self) -> &mut T {
+                        let ptr = unsafe { &mut *self.as_ptr::<T>() };
+                        ptr.as_mut().unwrap()
+                    }
+
+                    /// Consumes this resource and returns the underlying `T`.
+                    pub fn into_inner<T: GuestFrameStream>(self) -> T {
+                        let ptr = unsafe { &mut *self.as_ptr::<T>() };
+                        ptr.take().unwrap()
+                    }
+
+                    #[doc(hidden)]
+                    pub unsafe fn from_handle(handle: u32) -> Self {
+                        Self {
+                            handle: unsafe { _rt::Resource::from_handle(handle) },
+                        }
+                    }
+
+                    #[doc(hidden)]
+                    pub fn take_handle(&self) -> u32 {
+                        _rt::Resource::take_handle(&self.handle)
+                    }
+
+                    #[doc(hidden)]
+                    pub fn handle(&self) -> u32 {
+                        _rt::Resource::handle(&self.handle)
+                    }
+
+                    // It's theoretically possible to implement the `GuestFrameStream` trait twice
+                    // so guard against using it with two different types here.
+                    #[doc(hidden)]
+                    fn type_guard<T: 'static>() {
+                        use core::any::TypeId;
+                        static mut LAST_TYPE: Option<TypeId> = None;
+                        unsafe {
+                            assert!(!cfg!(target_feature = "atomics"));
+                            let id = TypeId::of::<T>();
+                            match LAST_TYPE {
+                                Some(ty) => assert!(
+                                    ty == id,
+                                    "cannot use two types with this resource type"
+                                ),
+                                None => LAST_TYPE = Some(id),
+                            }
+                        }
+                    }
+
+                    #[doc(hidden)]
+                    pub unsafe fn dtor<T: 'static>(handle: *mut u8) {
+                        Self::type_guard::<T>();
+                        let _ = unsafe { _rt::Box::from_raw(handle as *mut _FrameStreamRep<T>) };
+                    }
+
+                    fn as_ptr<T: GuestFrameStream>(&self) -> *mut _FrameStreamRep<T> {
+                        FrameStream::type_guard::<T>();
+                        T::_resource_rep(self.handle()).cast()
+                    }
+                }
+
+                /// A borrowed version of [`FrameStream`] which represents a borrowed value
+                /// with the lifetime `'a`.
+                #[derive(Debug)]
+                #[repr(transparent)]
+                pub struct FrameStreamBorrow<'a> {
+                    rep: *mut u8,
+                    _marker: core::marker::PhantomData<&'a FrameStream>,
+                }
+
+                impl<'a> FrameStreamBorrow<'a> {
+                    #[doc(hidden)]
+                    pub unsafe fn lift(rep: usize) -> Self {
+                        Self {
+                            rep: rep as *mut u8,
+                            _marker: core::marker::PhantomData,
+                        }
+                    }
+
+                    /// Gets access to the underlying `T` in this resource.
+                    pub fn get<T: GuestFrameStream>(&self) -> &T {
+                        let ptr = unsafe { &mut *self.as_ptr::<T>() };
+                        ptr.as_ref().unwrap()
+                    }
+
+                    // NB: mutable access is not allowed due to the component model allowing
+                    // multiple borrows of the same resource.
+
+                    fn as_ptr<T: 'static>(&self) -> *mut _FrameStreamRep<T> {
+                        FrameStream::type_guard::<T>();
+                        self.rep.cast()
+                    }
+                }
+
+                unsafe impl _rt::WasmResource for FrameStream {
+                    #[inline]
+                    unsafe fn drop(_handle: u32) {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unreachable!();
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            #[link(wasm_import_module = "[export]component:usb/cv@0.2.1")]
+                            unsafe extern "C" {
+                                #[link_name = "[resource-drop]frame-stream"]
+                                fn drop(_: u32);
+                            }
+
+                            unsafe { drop(_handle) };
+                        }
+                    }
+                }
+
+                /// Host-side YOLO object detector. The host runs inference natively
+                /// (tract-onnx) for maximum performance. Any guest can pass it an
+                /// assembled frame regardless of the capture device used.
+
+                #[derive(Debug)]
+                #[repr(transparent)]
+                pub struct ObjectDetector {
+                    handle: _rt::Resource<ObjectDetector>,
+                }
+
+                type _ObjectDetectorRep<T> = Option<T>;
+
+                impl ObjectDetector {
+                    /// Creates a new resource from the specified representation.
+                    ///
+                    /// This function will create a new resource handle by moving `val` onto
+                    /// the heap and then passing that heap pointer to the component model to
+                    /// create a handle. The owned handle is then returned as `ObjectDetector`.
+                    pub fn new<T: GuestObjectDetector>(val: T) -> Self {
+                        Self::type_guard::<T>();
+                        let val: _ObjectDetectorRep<T> = Some(val);
+                        let ptr: *mut _ObjectDetectorRep<T> =
+                            _rt::Box::into_raw(_rt::Box::new(val));
+                        unsafe { Self::from_handle(T::_resource_new(ptr.cast())) }
+                    }
+
+                    /// Gets access to the underlying `T` which represents this resource.
+                    pub fn get<T: GuestObjectDetector>(&self) -> &T {
+                        let ptr = unsafe { &*self.as_ptr::<T>() };
+                        ptr.as_ref().unwrap()
+                    }
+
+                    /// Gets mutable access to the underlying `T` which represents this
+                    /// resource.
+                    pub fn get_mut<T: GuestObjectDetector>(&mut self) -> &mut T {
+                        let ptr = unsafe { &mut *self.as_ptr::<T>() };
+                        ptr.as_mut().unwrap()
+                    }
+
+                    /// Consumes this resource and returns the underlying `T`.
+                    pub fn into_inner<T: GuestObjectDetector>(self) -> T {
+                        let ptr = unsafe { &mut *self.as_ptr::<T>() };
+                        ptr.take().unwrap()
+                    }
+
+                    #[doc(hidden)]
+                    pub unsafe fn from_handle(handle: u32) -> Self {
+                        Self {
+                            handle: unsafe { _rt::Resource::from_handle(handle) },
+                        }
+                    }
+
+                    #[doc(hidden)]
+                    pub fn take_handle(&self) -> u32 {
+                        _rt::Resource::take_handle(&self.handle)
+                    }
+
+                    #[doc(hidden)]
+                    pub fn handle(&self) -> u32 {
+                        _rt::Resource::handle(&self.handle)
+                    }
+
+                    // It's theoretically possible to implement the `GuestObjectDetector` trait twice
+                    // so guard against using it with two different types here.
+                    #[doc(hidden)]
+                    fn type_guard<T: 'static>() {
+                        use core::any::TypeId;
+                        static mut LAST_TYPE: Option<TypeId> = None;
+                        unsafe {
+                            assert!(!cfg!(target_feature = "atomics"));
+                            let id = TypeId::of::<T>();
+                            match LAST_TYPE {
+                                Some(ty) => assert!(
+                                    ty == id,
+                                    "cannot use two types with this resource type"
+                                ),
+                                None => LAST_TYPE = Some(id),
+                            }
+                        }
+                    }
+
+                    #[doc(hidden)]
+                    pub unsafe fn dtor<T: 'static>(handle: *mut u8) {
+                        Self::type_guard::<T>();
+                        let _ = unsafe { _rt::Box::from_raw(handle as *mut _ObjectDetectorRep<T>) };
+                    }
+
+                    fn as_ptr<T: GuestObjectDetector>(&self) -> *mut _ObjectDetectorRep<T> {
+                        ObjectDetector::type_guard::<T>();
+                        T::_resource_rep(self.handle()).cast()
+                    }
+                }
+
+                /// A borrowed version of [`ObjectDetector`] which represents a borrowed value
+                /// with the lifetime `'a`.
+                #[derive(Debug)]
+                #[repr(transparent)]
+                pub struct ObjectDetectorBorrow<'a> {
+                    rep: *mut u8,
+                    _marker: core::marker::PhantomData<&'a ObjectDetector>,
+                }
+
+                impl<'a> ObjectDetectorBorrow<'a> {
+                    #[doc(hidden)]
+                    pub unsafe fn lift(rep: usize) -> Self {
+                        Self {
+                            rep: rep as *mut u8,
+                            _marker: core::marker::PhantomData,
+                        }
+                    }
+
+                    /// Gets access to the underlying `T` in this resource.
+                    pub fn get<T: GuestObjectDetector>(&self) -> &T {
+                        let ptr = unsafe { &mut *self.as_ptr::<T>() };
+                        ptr.as_ref().unwrap()
+                    }
+
+                    // NB: mutable access is not allowed due to the component model allowing
+                    // multiple borrows of the same resource.
+
+                    fn as_ptr<T: 'static>(&self) -> *mut _ObjectDetectorRep<T> {
+                        ObjectDetector::type_guard::<T>();
+                        self.rep.cast()
+                    }
+                }
+
+                unsafe impl _rt::WasmResource for ObjectDetector {
+                    #[inline]
+                    unsafe fn drop(_handle: u32) {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unreachable!();
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            #[link(wasm_import_module = "[export]component:usb/cv@0.2.1")]
+                            unsafe extern "C" {
+                                #[link_name = "[resource-drop]object-detector"]
+                                fn drop(_: u32);
+                            }
+
+                            unsafe { drop(_handle) };
+                        }
+                    }
+                }
+
+                #[doc(hidden)]
+                #[allow(non_snake_case, unused_unsafe)]
+                pub unsafe fn _export_constructor_frame_stream_cabi<T: GuestFrameStream>(
+                    arg0: i32,
+                ) -> i32 {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        _rt::run_ctors_once();
+                        let result0 = { FrameStream::new(T::new(arg0 as u32)) };
+                        (result0).take_handle() as i32
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case, unused_unsafe)]
+                pub unsafe fn _export_method_frame_stream_read_frame_cabi<T: GuestFrameStream>(
+                    arg0: *mut u8,
+                ) -> *mut u8 {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        _rt::run_ctors_once();
+                        let result0 =
+                            { T::read_frame(FrameStreamBorrow::lift(arg0 as u32 as usize).get()) };
+                        let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                        match result0 {
+                            Ok(e) => {
+                                *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                                let Frame {
+                                    data: data2,
+                                    width: width2,
+                                    height: height2,
+                                } = e;
+                                let vec3 = (data2).into_boxed_slice();
+                                let ptr3 = vec3.as_ptr().cast::<u8>();
+                                let len3 = vec3.len();
+                                ::core::mem::forget(vec3);
+                                *ptr1
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>() = len3;
+                                *ptr1
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>() = ptr3.cast_mut();
+                                *ptr1
+                                    .add(3 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<i32>() = _rt::as_i32(width2);
+                                *ptr1
+                                    .add(4 + 3 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<i32>() = _rt::as_i32(height2);
+                            }
+                            Err(e) => {
+                                *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                                let vec4 = (e.into_bytes()).into_boxed_slice();
+                                let ptr4 = vec4.as_ptr().cast::<u8>();
+                                let len4 = vec4.len();
+                                ::core::mem::forget(vec4);
+                                *ptr1
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>() = len4;
+                                *ptr1
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>() = ptr4.cast_mut();
+                            }
+                        };
+                        ptr1
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_frame_stream_read_frame<T: GuestFrameStream>(
+                    arg0: *mut u8,
+                ) {
+                    unsafe {
+                        let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                        match l0 {
+                            0 => {
+                                let l1 = *arg0
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l2 = *arg0
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                let base3 = l1;
+                                let len3 = l2;
+                                _rt::cabi_dealloc(base3, len3 * 1, 1);
+                            }
+                            _ => {
+                                let l4 = *arg0
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l5 = *arg0
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                _rt::cabi_dealloc(l4, l5, 1);
+                            }
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case, unused_unsafe)]
+                pub unsafe fn _export_constructor_object_detector_cabi<T: GuestObjectDetector>(
+                    arg0: *mut u8,
+                    arg1: usize,
+                ) -> i32 {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        _rt::run_ctors_once();
+                        let result1 = {
+                            let len0 = arg1;
+                            let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
+                            ObjectDetector::new(T::new(_rt::string_lift(bytes0)))
+                        };
+                        (result1).take_handle() as i32
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case, unused_unsafe)]
+                pub unsafe fn _export_method_object_detector_detect_cabi<T: GuestObjectDetector>(
+                    arg0: *mut u8,
+                    arg1: *mut u8,
+                    arg2: usize,
+                    arg3: i32,
+                    arg4: i32,
+                ) -> *mut u8 {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        _rt::run_ctors_once();
+                        let result1 = {
+                            let len0 = arg2;
+                            T::detect(
+                                ObjectDetectorBorrow::lift(arg0 as u32 as usize).get(),
+                                Frame {
+                                    data: _rt::Vec::from_raw_parts(arg1.cast(), len0, len0),
+                                    width: arg3 as u32,
+                                    height: arg4 as u32,
+                                },
+                            )
+                        };
+                        let ptr2 = (&raw mut _RET_AREA.0).cast::<u8>();
+                        match result1 {
+                            Ok(e) => {
+                                *ptr2.add(0).cast::<u8>() = (0i32) as u8;
+                                let vec8 = e;
+                                let len8 = vec8.len();
+                                let layout8 = _rt::alloc::Layout::from_size_align(
+                                    vec8.len() * (16 + 3 * ::core::mem::size_of::<*const u8>()),
+                                    ::core::mem::size_of::<*const u8>(),
+                                )
+                                .unwrap();
+                                let (result8, _cleanup8) = wit_bindgen::rt::Cleanup::new(layout8);
+                                if let Some(cleanup) = _cleanup8 {
+                                    cleanup.forget();
+                                }
+                                for (i, e) in vec8.into_iter().enumerate() {
+                                    let base = result8
+                                        .add(i * (16 + 3 * ::core::mem::size_of::<*const u8>()));
+                                    {
+                                        let Detection {
+                                            label: label3,
+                                            confidence: confidence3,
+                                            box_: box_3,
+                                        } = e;
+                                        let vec4 = (label3.into_bytes()).into_boxed_slice();
+                                        let ptr4 = vec4.as_ptr().cast::<u8>();
+                                        let len4 = vec4.len();
+                                        ::core::mem::forget(vec4);
+                                        *base
+                                            .add(::core::mem::size_of::<*const u8>())
+                                            .cast::<usize>() = len4;
+                                        *base.add(0).cast::<*mut u8>() = ptr4.cast_mut();
+                                        *base
+                                            .add(2 * ::core::mem::size_of::<*const u8>())
+                                            .cast::<f32>() = _rt::as_f32(confidence3);
+                                        let BoundingBox {
+                                            origin: origin5,
+                                            size: size5,
+                                        } = box_3;
+                                        let Point { x: x6, y: y6 } = origin5;
+                                        *base
+                                            .add(4 + 2 * ::core::mem::size_of::<*const u8>())
+                                            .cast::<i32>() = _rt::as_i32(x6);
+                                        *base
+                                            .add(8 + 2 * ::core::mem::size_of::<*const u8>())
+                                            .cast::<i32>() = _rt::as_i32(y6);
+                                        let Size {
+                                            width: width7,
+                                            height: height7,
+                                        } = size5;
+                                        *base
+                                            .add(12 + 2 * ::core::mem::size_of::<*const u8>())
+                                            .cast::<i32>() = _rt::as_i32(width7);
+                                        *base
+                                            .add(16 + 2 * ::core::mem::size_of::<*const u8>())
+                                            .cast::<i32>() = _rt::as_i32(height7);
+                                    }
+                                }
+                                *ptr2
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>() = len8;
+                                *ptr2
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>() = result8;
+                            }
+                            Err(e) => {
+                                *ptr2.add(0).cast::<u8>() = (1i32) as u8;
+                                let vec9 = (e.into_bytes()).into_boxed_slice();
+                                let ptr9 = vec9.as_ptr().cast::<u8>();
+                                let len9 = vec9.len();
+                                ::core::mem::forget(vec9);
+                                *ptr2
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>() = len9;
+                                *ptr2
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>() = ptr9.cast_mut();
+                            }
+                        };
+                        ptr2
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_object_detector_detect<
+                    T: GuestObjectDetector,
+                >(
+                    arg0: *mut u8,
+                ) {
+                    unsafe {
+                        let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                        match l0 {
+                            0 => {
+                                let l1 = *arg0
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l2 = *arg0
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                let base5 = l1;
+                                let len5 = l2;
+                                for i in 0..len5 {
+                                    let base = base5
+                                        .add(i * (16 + 3 * ::core::mem::size_of::<*const u8>()));
+                                    {
+                                        let l3 = *base.add(0).cast::<*mut u8>();
+                                        let l4 = *base
+                                            .add(::core::mem::size_of::<*const u8>())
+                                            .cast::<usize>();
+                                        _rt::cabi_dealloc(l3, l4, 1);
+                                    }
+                                }
+                                _rt::cabi_dealloc(
+                                    base5,
+                                    len5 * (16 + 3 * ::core::mem::size_of::<*const u8>()),
+                                    ::core::mem::size_of::<*const u8>(),
+                                );
+                            }
+                            _ => {
+                                let l6 = *arg0
+                                    .add(::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l7 = *arg0
+                                    .add(2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                _rt::cabi_dealloc(l6, l7, 1);
+                            }
+                        }
+                    }
+                }
+                pub trait Guest {
+                    type FrameStream: GuestFrameStream;
+                    type ObjectDetector: GuestObjectDetector;
+                }
+                pub trait GuestFrameStream: 'static {
+                    #[doc(hidden)]
+                    unsafe fn _resource_new(val: *mut u8) -> u32
+                    where
+                        Self: Sized,
+                    {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let _ = val;
+                            unreachable!();
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            #[link(wasm_import_module = "[export]component:usb/cv@0.2.1")]
+                            unsafe extern "C" {
+                                #[link_name = "[resource-new]frame-stream"]
+                                fn new(_: *mut u8) -> u32;
+                            }
+                            unsafe { new(val) }
+                        }
+                    }
+
+                    #[doc(hidden)]
+                    fn _resource_rep(handle: u32) -> *mut u8
+                    where
+                        Self: Sized,
+                    {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let _ = handle;
+                            unreachable!();
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            #[link(wasm_import_module = "[export]component:usb/cv@0.2.1")]
+                            unsafe extern "C" {
+                                #[link_name = "[resource-rep]frame-stream"]
+                                fn rep(_: u32) -> *mut u8;
+                            }
+                            unsafe { rep(handle) }
+                        }
+                    }
+
+                    #[allow(async_fn_in_trait)]
+                    fn new(index: u32) -> Self;
+                    #[allow(async_fn_in_trait)]
+                    fn read_frame(&self) -> Result<Frame, _rt::String>;
+                }
+                pub trait GuestObjectDetector: 'static {
+                    #[doc(hidden)]
+                    unsafe fn _resource_new(val: *mut u8) -> u32
+                    where
+                        Self: Sized,
+                    {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let _ = val;
+                            unreachable!();
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            #[link(wasm_import_module = "[export]component:usb/cv@0.2.1")]
+                            unsafe extern "C" {
+                                #[link_name = "[resource-new]object-detector"]
+                                fn new(_: *mut u8) -> u32;
+                            }
+                            unsafe { new(val) }
+                        }
+                    }
+
+                    #[doc(hidden)]
+                    fn _resource_rep(handle: u32) -> *mut u8
+                    where
+                        Self: Sized,
+                    {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let _ = handle;
+                            unreachable!();
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            #[link(wasm_import_module = "[export]component:usb/cv@0.2.1")]
+                            unsafe extern "C" {
+                                #[link_name = "[resource-rep]object-detector"]
+                                fn rep(_: u32) -> *mut u8;
+                            }
+                            unsafe { rep(handle) }
+                        }
+                    }
+
+                    #[allow(async_fn_in_trait)]
+                    fn new(model_path: _rt::String) -> Self;
+                    #[allow(async_fn_in_trait)]
+                    fn detect(&self, f: Frame) -> Result<_rt::Vec<Detection>, _rt::String>;
+                }
+                #[doc(hidden)]
+                #[macro_export]
+                macro_rules! __export_component_usb_cv_0_2_1_cabi{
+  ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
+
+    #[unsafe(export_name = "component:usb/cv@0.2.1#[constructor]frame-stream")]
+    unsafe extern "C" fn export_constructor_frame_stream(arg0: i32,) -> i32 {
+      unsafe { $($path_to_types)*::_export_constructor_frame_stream_cabi::<<$ty as $($path_to_types)*::Guest>::FrameStream>(arg0) }
+    }
+    #[unsafe(export_name = "component:usb/cv@0.2.1#[method]frame-stream.read-frame")]
+    unsafe extern "C" fn export_method_frame_stream_read_frame(arg0: *mut u8,) -> *mut u8 {
+      unsafe { $($path_to_types)*::_export_method_frame_stream_read_frame_cabi::<<$ty as $($path_to_types)*::Guest>::FrameStream>(arg0) }
+    }
+    #[unsafe(export_name = "cabi_post_component:usb/cv@0.2.1#[method]frame-stream.read-frame")]
+    unsafe extern "C" fn _post_return_method_frame_stream_read_frame(arg0: *mut u8,) {
+      unsafe { $($path_to_types)*::__post_return_method_frame_stream_read_frame::<<$ty as $($path_to_types)*::Guest>::FrameStream>(arg0) }
+    }
+    #[unsafe(export_name = "component:usb/cv@0.2.1#[constructor]object-detector")]
+    unsafe extern "C" fn export_constructor_object_detector(arg0: *mut u8,arg1: usize,) -> i32 {
+      unsafe { $($path_to_types)*::_export_constructor_object_detector_cabi::<<$ty as $($path_to_types)*::Guest>::ObjectDetector>(arg0, arg1) }
+    }
+    #[unsafe(export_name = "component:usb/cv@0.2.1#[method]object-detector.detect")]
+    unsafe extern "C" fn export_method_object_detector_detect(arg0: *mut u8,arg1: *mut u8,arg2: usize,arg3: i32,arg4: i32,) -> *mut u8 {
+      unsafe { $($path_to_types)*::_export_method_object_detector_detect_cabi::<<$ty as $($path_to_types)*::Guest>::ObjectDetector>(arg0, arg1, arg2, arg3, arg4) }
+    }
+    #[unsafe(export_name = "cabi_post_component:usb/cv@0.2.1#[method]object-detector.detect")]
+    unsafe extern "C" fn _post_return_method_object_detector_detect(arg0: *mut u8,) {
+      unsafe { $($path_to_types)*::__post_return_method_object_detector_detect::<<$ty as $($path_to_types)*::Guest>::ObjectDetector>(arg0) }
+    }
+
+    const _: () = {
+      #[doc(hidden)]
+      #[unsafe(export_name = "component:usb/cv@0.2.1#[dtor]frame-stream")]
+      #[allow(non_snake_case)]
+      unsafe extern "C" fn dtor(rep: *mut u8) {
+        unsafe {
+          $($path_to_types)*::FrameStream::dtor::<
+          <$ty as $($path_to_types)*::Guest>::FrameStream
+          >(rep)
+        }
+      }
+    };
+
+
+    const _: () = {
+      #[doc(hidden)]
+      #[unsafe(export_name = "component:usb/cv@0.2.1#[dtor]object-detector")]
+      #[allow(non_snake_case)]
+      unsafe extern "C" fn dtor(rep: *mut u8) {
+        unsafe {
+          $($path_to_types)*::ObjectDetector::dtor::<
+          <$ty as $($path_to_types)*::Guest>::ObjectDetector
+          >(rep)
+        }
+      }
+    };
+
+  };);
+}
+                #[doc(hidden)]
+                pub use __export_component_usb_cv_0_2_1_cabi;
+
+                #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                struct _RetArea(
+                    [::core::mem::MaybeUninit<u8>; 8 + 3 * ::core::mem::size_of::<*const u8>()],
+                );
+                static mut _RET_AREA: _RetArea = _RetArea(
+                    [::core::mem::MaybeUninit::uninit();
+                        8 + 3 * ::core::mem::size_of::<*const u8>()],
+                );
+            }
+        }
+    }
+    pub mod wasi {
+        pub mod cli {
+
+            #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+            pub mod run {
+                #[used]
+                #[doc(hidden)]
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
+
+                use super::super::super::super::_rt;
+                #[doc(hidden)]
+                #[allow(non_snake_case, unused_unsafe)]
+                pub unsafe fn _export_run_cabi<T: Guest>() -> i32 {
+                    unsafe {
+                        #[cfg(target_arch = "wasm32")]
+                        _rt::run_ctors_once();
+                        let result0 = { T::run() };
+                        let result1 = match result0 {
+                            Ok(_) => 0i32,
+                            Err(_) => 1i32,
+                        };
+                        result1
+                    }
+                }
+                pub trait Guest {
+                    /// Run the program.
+                    #[allow(async_fn_in_trait)]
+                    fn run() -> Result<(), ()>;
+                }
+                #[doc(hidden)]
+                #[macro_export]
+                macro_rules! __export_wasi_cli_run_0_2_5_cabi{
+      ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
+
+        #[unsafe(export_name = "wasi:cli/run@0.2.5#run")]
+        unsafe extern "C" fn export_run() -> i32 {
+          unsafe { $($path_to_types)*::_export_run_cabi::<$ty>() }
+        }
+      };);
+    }
+                #[doc(hidden)]
+                pub use __export_wasi_cli_run_0_2_5_cabi;
+            }
+        }
+    }
+}
 mod _rt {
     #![allow(dead_code, clippy::all)]
 
@@ -3212,47 +5540,127 @@ mod _rt {
             unsafe { String::from_utf8_unchecked(bytes) }
         }
     }
-    extern crate alloc as alloc_crate;
     pub use alloc_crate::alloc;
+
+    pub fn as_i64<T: AsI64>(t: T) -> i64 {
+        t.as_i64()
+    }
+
+    pub trait AsI64 {
+        fn as_i64(self) -> i64;
+    }
+
+    impl<'a, T: Copy + AsI64> AsI64 for &'a T {
+        fn as_i64(self) -> i64 {
+            (*self).as_i64()
+        }
+    }
+
+    impl AsI64 for i64 {
+        #[inline]
+        fn as_i64(self) -> i64 {
+            self as i64
+        }
+    }
+
+    impl AsI64 for u64 {
+        #[inline]
+        fn as_i64(self) -> i64 {
+            self as i64
+        }
+    }
+    pub use alloc_crate::boxed::Box;
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn run_ctors_once() {
+        wit_bindgen::rt::run_ctors_once();
+    }
+
+    pub fn as_f32<T: AsF32>(t: T) -> f32 {
+        t.as_f32()
+    }
+
+    pub trait AsF32 {
+        fn as_f32(self) -> f32;
+    }
+
+    impl<'a, T: Copy + AsF32> AsF32 for &'a T {
+        fn as_f32(self) -> f32 {
+            (*self).as_f32()
+        }
+    }
+
+    impl AsF32 for f32 {
+        #[inline]
+        fn as_f32(self) -> f32 {
+            self as f32
+        }
+    }
+    extern crate alloc as alloc_crate;
 }
 
-#[cfg(target_arch = "wasm32")]
-#[unsafe(link_section = "component-type:wit-bindgen:0.42.1:component:usb@0.2.1:cguest-with-all-of-its-exports-removed:encoded world")]
+/// Generates `#[unsafe(no_mangle)]` functions to export the specified type as
+/// the root implementation of all generated traits.
+///
+/// For more information see the documentation of `wit_bindgen::generate!`.
+///
+/// ```rust
+/// # macro_rules! export{ ($($t:tt)*) => (); }
+/// # trait Guest {}
+/// struct MyType;
+///
+/// impl Guest for MyType {
+///     // ...
+/// }
+///
+/// export!(MyType);
+/// ```
+#[allow(unused_macros)]
 #[doc(hidden)]
-#[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 4446] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc1!\x01A\x02\x01A\x19\
-\x01B\x02\x01m\x0d\x02io\x0dinvalid-param\x06access\x09no-device\x09not-found\x04\
-busy\x07timeout\x08overflow\x04pipe\x0binterrupted\x06no-mem\x0dnot-supported\x05\
-other\x04\0\x0clibusb-error\x03\0\0\x03\0\x1acomponent:usb/errors@0.2.1\x05\0\x02\
-\x03\0\0\x0clibusb-error\x01B\x1e\x02\x03\x02\x01\x01\x04\0\x0clibusb-error\x03\0\
-\0\x01m\x04\x07control\x04bulk\x09interrupt\x0bisochronous\x04\0\x0dtransfer-typ\
-e\x03\0\x02\x01r\x04\x0fbm-request-type}\x09b-request}\x07w-value{\x07w-index{\x04\
-\0\x0etransfer-setup\x03\0\x04\x01r\x04\x08endpoint}\x0atimeout-msy\x09stream-id\
-y\x0biso-packetsy\x04\0\x10transfer-options\x03\0\x06\x04\0\x08transfer\x03\x01\x01\
-m\x07\x07success\x05error\x09timed-out\x09cancelled\x05stall\x09no-device\x08ove\
-rflow\x04\0\x11iso-packet-status\x03\0\x09\x01r\x02\x0dactual-lengthy\x06status\x0a\
-\x04\0\x0aiso-packet\x03\0\x0b\x01p}\x01p\x0c\x01r\x02\x04data\x0d\x07packets\x0e\
-\x04\0\x0aiso-result\x03\0\x0f\x01h\x08\x01j\0\x01\x01\x01@\x02\x04self\x11\x04d\
-ata\x0d\0\x12\x04\0\x20[method]transfer.submit-transfer\x01\x13\x01@\x01\x04self\
-\x11\0\x12\x04\0\x20[method]transfer.cancel-transfer\x01\x14\x01i\x08\x01j\x01\x0d\
-\x01\x01\x01@\x01\x04xfer\x15\0\x16\x04\0\x0eawait-transfer\x01\x17\x01j\x01\x10\
-\x01\x01\x01@\x01\x04xfer\x15\0\x18\x04\0\x12await-iso-transfer\x01\x19\x03\0\x1d\
-component:usb/transfers@0.2.1\x05\x02\x01B\x02\x01q\x02\x0cunconfigured\0\0\x05v\
-alue\x01}\0\x04\0\x0cconfig-value\x03\0\0\x03\0!component:usb/configuration@0.2.\
-1\x05\x03\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x0clibusb-error\x03\0\0\x01r\x0e\x06\
-length}\x0fdescriptor-type}\x0fusb-version-bcd{\x0cdevice-class}\x0fdevice-subcl\
-ass}\x0fdevice-protocol}\x10max-packet-size0}\x09vendor-id{\x0aproduct-id{\x12de\
-vice-version-bcd{\x12manufacturer-index}\x0dproduct-index}\x13serial-number-inde\
-x}\x12num-configurations}\x04\0\x11device-descriptor\x03\0\x02\x01r\x08\x06lengt\
-h}\x0fdescriptor-type}\x10endpoint-address}\x0aattributes}\x0fmax-packet-size{\x08\
-interval}\x07refresh}\x0dsynch-address}\x04\0\x13endpoint-descriptor\x03\0\x04\x01\
-p\x05\x01r\x09\x06length}\x0fdescriptor-type}\x10interface-number}\x11alternate-\
-setting}\x09endpoints\x06\x0finterface-class}\x12interface-subclass}\x12interfac\
-e-protocol}\x0finterface-index}\x04\0\x14interface-descriptor\x03\0\x07\x01p\x08\
-\x01r\x08\x06length}\x0fdescriptor-type}\x0ctotal-length{\x0ainterfaces\x09\x13c\
-onfiguration-value}\x13configuration-index}\x0aattributes}\x09max-power}\x04\0\x18\
-configuration-descriptor\x03\0\x0a\x03\0\x1fcomponent:usb/descriptors@0.2.1\x05\x04\
+#[macro_export]
+macro_rules! __export_cguest_impl {
+  ($ty:ident) => (usb_wasm_bindings::export!($ty with_types_in usb_wasm_bindings););
+  ($ty:ident with_types_in $($path_to_types_root:tt)*) => (
+  $($path_to_types_root)*::exports::component::usb::cv::__export_component_usb_cv_0_2_1_cabi!($ty with_types_in $($path_to_types_root)*::exports::component::usb::cv);
+  $($path_to_types_root)*::exports::wasi::cli::run::__export_wasi_cli_run_0_2_5_cabi!($ty with_types_in $($path_to_types_root)*::exports::wasi::cli::run);
+  const _: () = {
+
+    #[cfg(target_arch = "wasm32")]
+    #[unsafe(link_section = "component-type:wit-bindgen:0.42.1:component:usb@0.2.1:cguest:imports and exports")]
+    #[doc(hidden)]
+    #[allow(clippy::octal_escapes)]
+    pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 6410] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x8d1\x01A\x02\x01A1\x01\
+B\x02\x01m\x0d\x02io\x0dinvalid-param\x06access\x09no-device\x09not-found\x04bus\
+y\x07timeout\x08overflow\x04pipe\x0binterrupted\x06no-mem\x0dnot-supported\x05ot\
+her\x04\0\x0clibusb-error\x03\0\0\x03\0\x1acomponent:usb/errors@0.2.1\x05\0\x02\x03\
+\0\0\x0clibusb-error\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x0clibusb-error\x03\0\0\x01\
+m\x04\x07control\x04bulk\x09interrupt\x0bisochronous\x04\0\x0dtransfer-type\x03\0\
+\x02\x01r\x04\x0fbm-request-type}\x09b-request}\x07w-value{\x07w-index{\x04\0\x0e\
+transfer-setup\x03\0\x04\x01r\x04\x08endpoint}\x0atimeout-msy\x09stream-idy\x0bi\
+so-packetsy\x04\0\x10transfer-options\x03\0\x06\x04\0\x08transfer\x03\x01\x01m\x07\
+\x07success\x05error\x09timed-out\x09cancelled\x05stall\x09no-device\x08overflow\
+\x04\0\x11iso-packet-status\x03\0\x09\x01r\x02\x0dactual-lengthy\x06status\x0a\x04\
+\0\x0aiso-packet\x03\0\x0b\x01p}\x01p\x0c\x01r\x02\x04data\x0d\x07packets\x0e\x04\
+\0\x0ftransfer-result\x03\0\x0f\x01h\x08\x01j\0\x01\x01\x01@\x02\x04self\x11\x04\
+data\x0d\0\x12\x04\0\x20[method]transfer.submit-transfer\x01\x13\x01@\x01\x04sel\
+f\x11\0\x12\x04\0\x20[method]transfer.cancel-transfer\x01\x14\x01i\x08\x01j\x01\x10\
+\x01\x01\x01@\x01\x04xfer\x15\0\x16\x04\0\x0eawait-transfer\x01\x17\x03\0\x1dcom\
+ponent:usb/transfers@0.2.1\x05\x02\x01B\x02\x01q\x02\x0cunconfigured\0\0\x05valu\
+e\x01}\0\x04\0\x0cconfig-value\x03\0\0\x03\0!component:usb/configuration@0.2.1\x05\
+\x03\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x0clibusb-error\x03\0\0\x01r\x0e\x06leng\
+th}\x0fdescriptor-type}\x0fusb-version-bcd{\x0cdevice-class}\x0fdevice-subclass}\
+\x0fdevice-protocol}\x10max-packet-size0}\x09vendor-id{\x0aproduct-id{\x12device\
+-version-bcd{\x12manufacturer-index}\x0dproduct-index}\x13serial-number-index}\x12\
+num-configurations}\x04\0\x11device-descriptor\x03\0\x02\x01r\x08\x06length}\x0f\
+descriptor-type}\x10endpoint-address}\x0aattributes}\x0fmax-packet-size{\x08inte\
+rval}\x07refresh}\x0dsynch-address}\x04\0\x13endpoint-descriptor\x03\0\x04\x01p\x05\
+\x01r\x09\x06length}\x0fdescriptor-type}\x10interface-number}\x11alternate-setti\
+ng}\x09endpoints\x06\x0finterface-class}\x12interface-subclass}\x12interface-pro\
+tocol}\x0finterface-index}\x04\0\x14interface-descriptor\x03\0\x07\x01p\x08\x01r\
+\x08\x06length}\x0fdescriptor-type}\x0ctotal-length{\x0ainterfaces\x09\x13config\
+uration-value}\x13configuration-index}\x0aattributes}\x09max-power}\x04\0\x18con\
+figuration-descriptor\x03\0\x0a\x03\0\x1fcomponent:usb/descriptors@0.2.1\x05\x04\
 \x02\x03\0\x02\x0cconfig-value\x02\x03\0\x03\x11device-descriptor\x02\x03\0\x03\x18\
 configuration-descriptor\x02\x03\0\x03\x14interface-descriptor\x02\x03\0\x03\x13\
 endpoint-descriptor\x02\x03\0\x01\x08transfer\x02\x03\0\x01\x0dtransfer-type\x02\
@@ -3305,10 +5713,185 @@ me\x03\0\x09\x04\0\x0cframe-stream\x03\x01\x04\0\x0fobject-detector\x03\x01\x01i
 -frame\x01\x11\x01i\x0c\x01@\x01\x0amodel-paths\0\x12\x04\0\x1c[constructor]obje\
 ct-detector\x01\x13\x01h\x0c\x01p\x07\x01j\x01\x15\x01s\x01@\x02\x04self\x14\x01\
 f\x0a\0\x16\x04\0\x1e[method]object-detector.detect\x01\x17\x03\0\x16component:u\
-sb/cv@0.2.1\x05\x11\x04\0:component:usb/cguest-with-all-of-its-exports-removed@0\
-.2.1\x04\0\x0b,\x01\0&cguest-with-all-of-its-exports-removed\x03\0\0\0G\x09produ\
-cers\x01\x0cprocessed-by\x02\x0dwit-component\x070.230.0\x10wit-bindgen-rust\x06\
-0.42.1";
+sb/cv@0.2.1\x05\x11\x01B\x0a\x01o\x02ss\x01p\0\x01@\0\0\x01\x04\0\x0fget-environ\
+ment\x01\x02\x01ps\x01@\0\0\x03\x04\0\x0dget-arguments\x01\x04\x01ks\x01@\0\0\x05\
+\x04\0\x0binitial-cwd\x01\x06\x03\0\x1awasi:cli/environment@0.2.5\x05\x12\x01B\x03\
+\x01j\0\0\x01@\x01\x06status\0\x01\0\x04\0\x04exit\x01\x01\x03\0\x13wasi:cli/exi\
+t@0.2.5\x05\x13\x01B\x04\x04\0\x05error\x03\x01\x01h\0\x01@\x01\x04self\x01\0s\x04\
+\0\x1d[method]error.to-debug-string\x01\x02\x03\0\x13wasi:io/error@0.2.5\x05\x14\
+\x01B\x0a\x04\0\x08pollable\x03\x01\x01h\0\x01@\x01\x04self\x01\0\x7f\x04\0\x16[\
+method]pollable.ready\x01\x02\x01@\x01\x04self\x01\x01\0\x04\0\x16[method]pollab\
+le.block\x01\x03\x01p\x01\x01py\x01@\x01\x02in\x04\0\x05\x04\0\x04poll\x01\x06\x03\
+\0\x12wasi:io/poll@0.2.5\x05\x15\x02\x03\0\x09\x05error\x02\x03\0\x0a\x08pollabl\
+e\x01B(\x02\x03\x02\x01\x16\x04\0\x05error\x03\0\0\x02\x03\x02\x01\x17\x04\0\x08\
+pollable\x03\0\x02\x01i\x01\x01q\x02\x15last-operation-failed\x01\x04\0\x06close\
+d\0\0\x04\0\x0cstream-error\x03\0\x05\x04\0\x0cinput-stream\x03\x01\x04\0\x0dout\
+put-stream\x03\x01\x01h\x07\x01p}\x01j\x01\x0a\x01\x06\x01@\x02\x04self\x09\x03l\
+enw\0\x0b\x04\0\x19[method]input-stream.read\x01\x0c\x04\0\"[method]input-stream\
+.blocking-read\x01\x0c\x01j\x01w\x01\x06\x01@\x02\x04self\x09\x03lenw\0\x0d\x04\0\
+\x19[method]input-stream.skip\x01\x0e\x04\0\"[method]input-stream.blocking-skip\x01\
+\x0e\x01i\x03\x01@\x01\x04self\x09\0\x0f\x04\0\x1e[method]input-stream.subscribe\
+\x01\x10\x01h\x08\x01@\x01\x04self\x11\0\x0d\x04\0![method]output-stream.check-w\
+rite\x01\x12\x01j\0\x01\x06\x01@\x02\x04self\x11\x08contents\x0a\0\x13\x04\0\x1b\
+[method]output-stream.write\x01\x14\x04\0.[method]output-stream.blocking-write-a\
+nd-flush\x01\x14\x01@\x01\x04self\x11\0\x13\x04\0\x1b[method]output-stream.flush\
+\x01\x15\x04\0$[method]output-stream.blocking-flush\x01\x15\x01@\x01\x04self\x11\
+\0\x0f\x04\0\x1f[method]output-stream.subscribe\x01\x16\x01@\x02\x04self\x11\x03\
+lenw\0\x13\x04\0\"[method]output-stream.write-zeroes\x01\x17\x04\05[method]outpu\
+t-stream.blocking-write-zeroes-and-flush\x01\x17\x01@\x03\x04self\x11\x03src\x09\
+\x03lenw\0\x0d\x04\0\x1c[method]output-stream.splice\x01\x18\x04\0%[method]outpu\
+t-stream.blocking-splice\x01\x18\x03\0\x15wasi:io/streams@0.2.5\x05\x18\x02\x03\0\
+\x0b\x0doutput-stream\x01B\x05\x02\x03\x02\x01\x19\x04\0\x0doutput-stream\x03\0\0\
+\x01i\x01\x01@\0\0\x02\x04\0\x0aget-stderr\x01\x03\x03\0\x15wasi:cli/stderr@0.2.\
+5\x05\x1a\x02\x03\0\x0b\x0cinput-stream\x01B\x05\x02\x03\x02\x01\x1b\x04\0\x0cin\
+put-stream\x03\0\0\x01i\x01\x01@\0\0\x02\x04\0\x09get-stdin\x01\x03\x03\0\x14was\
+i:cli/stdin@0.2.5\x05\x1c\x01B\x05\x02\x03\x02\x01\x19\x04\0\x0doutput-stream\x03\
+\0\0\x01i\x01\x01@\0\0\x02\x04\0\x0aget-stdout\x01\x03\x03\0\x15wasi:cli/stdout@\
+0.2.5\x05\x1d\x01B\x1c\x01r\x02\x01xy\x01yy\x04\0\x05point\x03\0\0\x01r\x02\x05w\
+idthy\x06heighty\x04\0\x04size\x03\0\x02\x01r\x02\x06origin\x01\x04size\x03\x04\0\
+\x0cbounding-box\x03\0\x04\x01r\x03\x05labels\x0aconfidencev\x03box\x05\x04\0\x09\
+detection\x03\0\x06\x01p}\x01r\x03\x04data\x08\x05widthy\x06heighty\x04\0\x05fra\
+me\x03\0\x09\x04\0\x0cframe-stream\x03\x01\x04\0\x0fobject-detector\x03\x01\x01i\
+\x0b\x01@\x01\x05indexy\0\x0d\x04\0\x19[constructor]frame-stream\x01\x0e\x01h\x0b\
+\x01j\x01\x0a\x01s\x01@\x01\x04self\x0f\0\x10\x04\0\x1f[method]frame-stream.read\
+-frame\x01\x11\x01i\x0c\x01@\x01\x0amodel-paths\0\x12\x04\0\x1c[constructor]obje\
+ct-detector\x01\x13\x01h\x0c\x01p\x07\x01j\x01\x15\x01s\x01@\x02\x04self\x14\x01\
+f\x0a\0\x16\x04\0\x1e[method]object-detector.detect\x01\x17\x04\0\x16component:u\
+sb/cv@0.2.1\x05\x1e\x01B\x03\x01j\0\0\x01@\0\0\0\x04\0\x03run\x01\x01\x04\0\x12w\
+asi:cli/run@0.2.5\x05\x1f\x04\0\x1acomponent:usb/cguest@0.2.1\x04\0\x0b\x0c\x01\0\
+\x06cguest\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070\
+.230.0\x10wit-bindgen-rust\x060.42.1";
+  };
+  )
+}
+#[doc(inline)]
+pub use __export_cguest_impl as export;
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(link_section = "component-type:wit-bindgen:0.42.1:component:usb@0.2.1:cguest-with-all-of-its-exports-removed:encoded world")]
+#[doc(hidden)]
+#[allow(clippy::octal_escapes)]
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 5986] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc5-\x01A\x02\x01A-\x01\
+B\x02\x01m\x0d\x02io\x0dinvalid-param\x06access\x09no-device\x09not-found\x04bus\
+y\x07timeout\x08overflow\x04pipe\x0binterrupted\x06no-mem\x0dnot-supported\x05ot\
+her\x04\0\x0clibusb-error\x03\0\0\x03\0\x1acomponent:usb/errors@0.2.1\x05\0\x02\x03\
+\0\0\x0clibusb-error\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x0clibusb-error\x03\0\0\x01\
+m\x04\x07control\x04bulk\x09interrupt\x0bisochronous\x04\0\x0dtransfer-type\x03\0\
+\x02\x01r\x04\x0fbm-request-type}\x09b-request}\x07w-value{\x07w-index{\x04\0\x0e\
+transfer-setup\x03\0\x04\x01r\x04\x08endpoint}\x0atimeout-msy\x09stream-idy\x0bi\
+so-packetsy\x04\0\x10transfer-options\x03\0\x06\x04\0\x08transfer\x03\x01\x01m\x07\
+\x07success\x05error\x09timed-out\x09cancelled\x05stall\x09no-device\x08overflow\
+\x04\0\x11iso-packet-status\x03\0\x09\x01r\x02\x0dactual-lengthy\x06status\x0a\x04\
+\0\x0aiso-packet\x03\0\x0b\x01p}\x01p\x0c\x01r\x02\x04data\x0d\x07packets\x0e\x04\
+\0\x0ftransfer-result\x03\0\x0f\x01h\x08\x01j\0\x01\x01\x01@\x02\x04self\x11\x04\
+data\x0d\0\x12\x04\0\x20[method]transfer.submit-transfer\x01\x13\x01@\x01\x04sel\
+f\x11\0\x12\x04\0\x20[method]transfer.cancel-transfer\x01\x14\x01i\x08\x01j\x01\x10\
+\x01\x01\x01@\x01\x04xfer\x15\0\x16\x04\0\x0eawait-transfer\x01\x17\x03\0\x1dcom\
+ponent:usb/transfers@0.2.1\x05\x02\x01B\x02\x01q\x02\x0cunconfigured\0\0\x05valu\
+e\x01}\0\x04\0\x0cconfig-value\x03\0\0\x03\0!component:usb/configuration@0.2.1\x05\
+\x03\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x0clibusb-error\x03\0\0\x01r\x0e\x06leng\
+th}\x0fdescriptor-type}\x0fusb-version-bcd{\x0cdevice-class}\x0fdevice-subclass}\
+\x0fdevice-protocol}\x10max-packet-size0}\x09vendor-id{\x0aproduct-id{\x12device\
+-version-bcd{\x12manufacturer-index}\x0dproduct-index}\x13serial-number-index}\x12\
+num-configurations}\x04\0\x11device-descriptor\x03\0\x02\x01r\x08\x06length}\x0f\
+descriptor-type}\x10endpoint-address}\x0aattributes}\x0fmax-packet-size{\x08inte\
+rval}\x07refresh}\x0dsynch-address}\x04\0\x13endpoint-descriptor\x03\0\x04\x01p\x05\
+\x01r\x09\x06length}\x0fdescriptor-type}\x10interface-number}\x11alternate-setti\
+ng}\x09endpoints\x06\x0finterface-class}\x12interface-subclass}\x12interface-pro\
+tocol}\x0finterface-index}\x04\0\x14interface-descriptor\x03\0\x07\x01p\x08\x01r\
+\x08\x06length}\x0fdescriptor-type}\x0ctotal-length{\x0ainterfaces\x09\x13config\
+uration-value}\x13configuration-index}\x0aattributes}\x09max-power}\x04\0\x18con\
+figuration-descriptor\x03\0\x0a\x03\0\x1fcomponent:usb/descriptors@0.2.1\x05\x04\
+\x02\x03\0\x02\x0cconfig-value\x02\x03\0\x03\x11device-descriptor\x02\x03\0\x03\x18\
+configuration-descriptor\x02\x03\0\x03\x14interface-descriptor\x02\x03\0\x03\x13\
+endpoint-descriptor\x02\x03\0\x01\x08transfer\x02\x03\0\x01\x0dtransfer-type\x02\
+\x03\0\x01\x0etransfer-setup\x02\x03\0\x01\x10transfer-options\x01BN\x02\x03\x02\
+\x01\x01\x04\0\x0clibusb-error\x03\0\0\x02\x03\x02\x01\x05\x04\0\x0cconfig-value\
+\x03\0\x02\x02\x03\x02\x01\x06\x04\0\x11device-descriptor\x03\0\x04\x02\x03\x02\x01\
+\x07\x04\0\x18configuration-descriptor\x03\0\x06\x02\x03\x02\x01\x08\x04\0\x14in\
+terface-descriptor\x03\0\x08\x02\x03\x02\x01\x09\x04\0\x13endpoint-descriptor\x03\
+\0\x0a\x02\x03\x02\x01\x0a\x04\0\x08transfer\x03\0\x0c\x02\x03\x02\x01\x0b\x04\0\
+\x0dtransfer-type\x03\0\x0e\x02\x03\x02\x01\x0c\x04\0\x0etransfer-setup\x03\0\x10\
+\x02\x03\x02\x01\x0d\x04\0\x10transfer-options\x03\0\x12\x04\0\x0ausb-device\x03\
+\x01\x04\0\x0ddevice-handle\x03\x01\x01m\x07\x07unknown\x03low\x04full\x04high\x05\
+super\x0asuper-plus\x0dsuper-plus-X2\x04\0\x09usb-speed\x03\0\x16\x01r\x04\x0abu\
+s-number}\x0edevice-address}\x0bport-number}\x05speed\x17\x04\0\x0fdevice-locati\
+on\x03\0\x18\x01h\x14\x01i\x15\x01j\x01\x1b\x01\x01\x01@\x01\x04self\x1a\0\x1c\x04\
+\0\x17[method]usb-device.open\x01\x1d\x01j\x01\x07\x01\x01\x01@\x02\x04self\x1a\x0c\
+config-index}\0\x1e\x04\0/[method]usb-device.get-configuration-descriptor\x01\x1f\
+\x01@\x02\x04self\x1a\x0cconfig-value}\0\x1e\x04\08[method]usb-device.get-config\
+uration-descriptor-by-value\x01\x20\x01@\x01\x04self\x1a\0\x1e\x04\06[method]usb\
+-device.get-active-configuration-descriptor\x01!\x01h\x15\x01j\x01}\x01\x01\x01@\
+\x01\x04self\"\0#\x04\0'[method]device-handle.get-configuration\x01$\x01j\0\x01\x01\
+\x01@\x02\x04self\"\x06config\x03\0%\x04\0'[method]device-handle.set-configurati\
+on\x01&\x01@\x02\x04self\"\x04ifac}\0%\x04\0%[method]device-handle.claim-interfa\
+ce\x01'\x04\0'[method]device-handle.release-interface\x01'\x01@\x03\x04self\"\x04\
+ifac}\x0balt-setting}\0%\x04\0.[method]device-handle.set-interface-altsetting\x01\
+(\x01@\x02\x04self\"\x08endpoint}\0%\x04\0\x20[method]device-handle.clear-halt\x01\
+)\x01@\x01\x04self\"\0%\x04\0\"[method]device-handle.reset-device\x01*\x01p}\x01\
+@\x03\x04self\"\x0bnum-streamsy\x09endpoints+\0%\x04\0#[method]device-handle.all\
+oc-streams\x01,\x01@\x02\x04self\"\x09endpoints+\0%\x04\0\"[method]device-handle\
+.free-streams\x01-\x01j\x01\x7f\x01\x01\x01@\x02\x04self\"\x04ifac}\0.\x04\0*[me\
+thod]device-handle.kernel-driver-active\x01/\x04\0*[method]device-handle.detach-\
+kernel-driver\x01'\x04\0*[method]device-handle.attach-kernel-driver\x01'\x01i\x0d\
+\x01j\x010\x01\x01\x01@\x05\x04self\"\x09xfer-type\x0f\x05setup\x11\x08buf-sizey\
+\x04opts\x13\01\x04\0\"[method]device-handle.new-transfer\x012\x01@\x01\x04self\"\
+\x01\0\x04\0\x1b[method]device-handle.close\x013\x01@\0\0%\x04\0\x04init\x014\x01\
+i\x14\x01o\x035\x05\x19\x01p6\x01j\x017\x01\x01\x01@\0\08\x04\0\x0clist-devices\x01\
+9\x03\0\x1acomponent:usb/device@0.2.1\x05\x0e\x02\x03\0\x04\x0ausb-device\x01B\x10\
+\x02\x03\x02\x01\x01\x04\0\x0clibusb-error\x03\0\0\x02\x03\x02\x01\x0f\x04\0\x0a\
+usb-device\x03\0\x02\x01n\x02\x07arrived\x04left\x04\0\x05event\x03\0\x04\x01r\x04\
+\x03bus}\x07address}\x06vendor{\x07product{\x04\0\x04info\x03\0\x06\x01j\0\x01\x01\
+\x01@\0\0\x08\x04\0\x0eenable-hotplug\x01\x09\x01i\x03\x01o\x03\x05\x07\x0a\x01p\
+\x0b\x01@\0\0\x0c\x04\0\x0bpoll-events\x01\x0d\x03\0\x1fcomponent:usb/usb-hotplu\
+g@0.2.1\x05\x10\x01B\x1c\x01r\x02\x01xy\x01yy\x04\0\x05point\x03\0\0\x01r\x02\x05\
+widthy\x06heighty\x04\0\x04size\x03\0\x02\x01r\x02\x06origin\x01\x04size\x03\x04\
+\0\x0cbounding-box\x03\0\x04\x01r\x03\x05labels\x0aconfidencev\x03box\x05\x04\0\x09\
+detection\x03\0\x06\x01p}\x01r\x03\x04data\x08\x05widthy\x06heighty\x04\0\x05fra\
+me\x03\0\x09\x04\0\x0cframe-stream\x03\x01\x04\0\x0fobject-detector\x03\x01\x01i\
+\x0b\x01@\x01\x05indexy\0\x0d\x04\0\x19[constructor]frame-stream\x01\x0e\x01h\x0b\
+\x01j\x01\x0a\x01s\x01@\x01\x04self\x0f\0\x10\x04\0\x1f[method]frame-stream.read\
+-frame\x01\x11\x01i\x0c\x01@\x01\x0amodel-paths\0\x12\x04\0\x1c[constructor]obje\
+ct-detector\x01\x13\x01h\x0c\x01p\x07\x01j\x01\x15\x01s\x01@\x02\x04self\x14\x01\
+f\x0a\0\x16\x04\0\x1e[method]object-detector.detect\x01\x17\x03\0\x16component:u\
+sb/cv@0.2.1\x05\x11\x01B\x0a\x01o\x02ss\x01p\0\x01@\0\0\x01\x04\0\x0fget-environ\
+ment\x01\x02\x01ps\x01@\0\0\x03\x04\0\x0dget-arguments\x01\x04\x01ks\x01@\0\0\x05\
+\x04\0\x0binitial-cwd\x01\x06\x03\0\x1awasi:cli/environment@0.2.5\x05\x12\x01B\x03\
+\x01j\0\0\x01@\x01\x06status\0\x01\0\x04\0\x04exit\x01\x01\x03\0\x13wasi:cli/exi\
+t@0.2.5\x05\x13\x01B\x04\x04\0\x05error\x03\x01\x01h\0\x01@\x01\x04self\x01\0s\x04\
+\0\x1d[method]error.to-debug-string\x01\x02\x03\0\x13wasi:io/error@0.2.5\x05\x14\
+\x01B\x0a\x04\0\x08pollable\x03\x01\x01h\0\x01@\x01\x04self\x01\0\x7f\x04\0\x16[\
+method]pollable.ready\x01\x02\x01@\x01\x04self\x01\x01\0\x04\0\x16[method]pollab\
+le.block\x01\x03\x01p\x01\x01py\x01@\x01\x02in\x04\0\x05\x04\0\x04poll\x01\x06\x03\
+\0\x12wasi:io/poll@0.2.5\x05\x15\x02\x03\0\x09\x05error\x02\x03\0\x0a\x08pollabl\
+e\x01B(\x02\x03\x02\x01\x16\x04\0\x05error\x03\0\0\x02\x03\x02\x01\x17\x04\0\x08\
+pollable\x03\0\x02\x01i\x01\x01q\x02\x15last-operation-failed\x01\x04\0\x06close\
+d\0\0\x04\0\x0cstream-error\x03\0\x05\x04\0\x0cinput-stream\x03\x01\x04\0\x0dout\
+put-stream\x03\x01\x01h\x07\x01p}\x01j\x01\x0a\x01\x06\x01@\x02\x04self\x09\x03l\
+enw\0\x0b\x04\0\x19[method]input-stream.read\x01\x0c\x04\0\"[method]input-stream\
+.blocking-read\x01\x0c\x01j\x01w\x01\x06\x01@\x02\x04self\x09\x03lenw\0\x0d\x04\0\
+\x19[method]input-stream.skip\x01\x0e\x04\0\"[method]input-stream.blocking-skip\x01\
+\x0e\x01i\x03\x01@\x01\x04self\x09\0\x0f\x04\0\x1e[method]input-stream.subscribe\
+\x01\x10\x01h\x08\x01@\x01\x04self\x11\0\x0d\x04\0![method]output-stream.check-w\
+rite\x01\x12\x01j\0\x01\x06\x01@\x02\x04self\x11\x08contents\x0a\0\x13\x04\0\x1b\
+[method]output-stream.write\x01\x14\x04\0.[method]output-stream.blocking-write-a\
+nd-flush\x01\x14\x01@\x01\x04self\x11\0\x13\x04\0\x1b[method]output-stream.flush\
+\x01\x15\x04\0$[method]output-stream.blocking-flush\x01\x15\x01@\x01\x04self\x11\
+\0\x0f\x04\0\x1f[method]output-stream.subscribe\x01\x16\x01@\x02\x04self\x11\x03\
+lenw\0\x13\x04\0\"[method]output-stream.write-zeroes\x01\x17\x04\05[method]outpu\
+t-stream.blocking-write-zeroes-and-flush\x01\x17\x01@\x03\x04self\x11\x03src\x09\
+\x03lenw\0\x0d\x04\0\x1c[method]output-stream.splice\x01\x18\x04\0%[method]outpu\
+t-stream.blocking-splice\x01\x18\x03\0\x15wasi:io/streams@0.2.5\x05\x18\x02\x03\0\
+\x0b\x0doutput-stream\x01B\x05\x02\x03\x02\x01\x19\x04\0\x0doutput-stream\x03\0\0\
+\x01i\x01\x01@\0\0\x02\x04\0\x0aget-stderr\x01\x03\x03\0\x15wasi:cli/stderr@0.2.\
+5\x05\x1a\x02\x03\0\x0b\x0cinput-stream\x01B\x05\x02\x03\x02\x01\x1b\x04\0\x0cin\
+put-stream\x03\0\0\x01i\x01\x01@\0\0\x02\x04\0\x09get-stdin\x01\x03\x03\0\x14was\
+i:cli/stdin@0.2.5\x05\x1c\x01B\x05\x02\x03\x02\x01\x19\x04\0\x0doutput-stream\x03\
+\0\0\x01i\x01\x01@\0\0\x02\x04\0\x0aget-stdout\x01\x03\x03\0\x15wasi:cli/stdout@\
+0.2.5\x05\x1d\x04\0:component:usb/cguest-with-all-of-its-exports-removed@0.2.1\x04\
+\0\x0b,\x01\0&cguest-with-all-of-its-exports-removed\x03\0\0\0G\x09producers\x01\
+\x0cprocessed-by\x02\x0dwit-component\x070.230.0\x10wit-bindgen-rust\x060.42.1";
 
 #[inline(never)]
 #[doc(hidden)]

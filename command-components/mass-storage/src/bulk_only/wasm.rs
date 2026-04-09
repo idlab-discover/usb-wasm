@@ -4,26 +4,24 @@ use thiserror::Error;
 
 use tracing::trace;
 
-use usb_wasm_bindings::{
-    device::{UsbConfiguration, UsbDevice, UsbEndpoint, UsbInterface},
-    types::{ControlSetup, ControlSetupRecipient, ControlSetupType, Direction, TransferType},
-};
+use usb_wasm_bindings::configuration::ConfigValue;
+use usb_wasm_bindings::descriptors::{ConfigurationDescriptor, InterfaceDescriptor};
+use usb_wasm_bindings::device::{DeviceHandle, UsbDevice};
+use usb_wasm_bindings::transfers::{await_transfer, TransferOptions, TransferSetup, TransferType};
 
 #[derive(Debug, Error)]
 pub enum BulkOnlyTransportError {
     #[error("Invalid LUN")]
     InvalidLUN,
-    #[error("The device responded with a differnt tag than was expected")]
+    #[error("The device responded with a different tag than was expected")]
     IncorrectTag,
 }
 
 // Implementation of the base Bulk Only Transfer protocol
 pub struct BulkOnlyTransportDevice {
-    pub(crate) bulk_in: UsbEndpoint,
-    pub(crate) bulk_out: UsbEndpoint,
-    pub(crate) _interface: UsbInterface, // We need to keep these alive because of the endpoint resources
-    pub(crate) _configuration: UsbConfiguration, // We need to keep these alive because of the endpoint resources
-    pub(crate) device: UsbDevice,
+    pub(crate) bulk_in: u8,
+    pub(crate) bulk_out: u8,
+    pub(crate) handle: DeviceHandle,
     pub(crate) current_tag: u32,
     pub(crate) selected_lun: u8,
     pub(crate) max_lun: u8,
@@ -33,63 +31,64 @@ impl BulkOnlyTransportDevice {
     // Also opens the device, selects the configuration, and claims the interface
     pub fn new(
         device: UsbDevice,
-        configuration: UsbConfiguration,
-        interface: UsbInterface,
+        configuration: ConfigurationDescriptor,
+        interface: InterfaceDescriptor,
     ) -> Self {
-        device.open();
-        device.reset();
-        if device.active_configuration().descriptor().number != configuration.descriptor().number {
-            device.select_configuration(&configuration);
-        };
-        device.claim_interface(&interface);
+        let handle = device.open().expect("Failed to open device");
+        handle.reset_device().ok();
+
+        // Check active configuration
+        let active_config = handle.get_configuration().unwrap_or(0);
+        if active_config != configuration.configuration_value {
+            handle
+                .set_configuration(ConfigValue::Value(configuration.configuration_value))
+                .ok();
+        }
+
+        handle.claim_interface(interface.interface_number).ok();
 
         // Find endpoints
-        let (bulk_in, bulk_out) = {
-            (
-                interface
-                    .endpoints()
-                    .into_iter()
-                    .find(|ep| {
-                        ep.descriptor().direction == Direction::In
-                            && ep.descriptor().transfer_type == TransferType::Bulk
-                    })
-                    .unwrap(),
-                interface
-                    .endpoints()
-                    .into_iter()
-                    .find(|ep| {
-                        ep.descriptor().direction == Direction::Out
-                            && ep.descriptor().transfer_type == TransferType::Bulk
-                    })
-                    .unwrap(),
-            )
-        };
+        let mut bulk_in = 0;
+        let mut bulk_out = 0;
+
+        for ep in &interface.endpoints {
+            let is_in = (ep.endpoint_address & 0x80) != 0;
+            let is_bulk = (ep.attributes & 0x03) == 0x02;
+            if is_bulk {
+                if is_in {
+                    bulk_in = ep.endpoint_address;
+                } else {
+                    bulk_out = ep.endpoint_address;
+                }
+            }
+        }
 
         // Get Max LUN
-        let max_lun = {
-            let lun_data = device.read_control(
-                ControlSetup {
-                    request_type: ControlSetupType::Class,
-                    request_recipient: ControlSetupRecipient::Interface,
-                    request: 0xFE,
-                    value: 0,
-                    index: interface.descriptor().interface_number as u16,
-                },
-                1,
-            );
-            lun_data[0]
+        let setup = TransferSetup {
+            bm_request_type: 0xA1, // Class, Interface, IN
+            b_request: 0xFE,       // GET_MAX_LUN
+            w_value: 0,
+            w_index: interface.interface_number as u16,
+        };
+        let opts = TransferOptions {
+            endpoint: 0,
+            timeout_ms: 1000,
+            stream_id: 0,
+            iso_packets: 0,
         };
 
-        BulkOnlyTransportDevice {
-            device,
-            _configuration: configuration,
-            _interface: interface,
+        let xfer = handle
+            .new_transfer(TransferType::Control, setup, 1, opts)
+            .expect("Failed to create GET_MAX_LUN transfer");
+        xfer.submit_transfer(&[]).ok();
+        let lun_data = await_transfer(xfer).unwrap_or(vec![0]);
+        let max_lun = lun_data[0];
 
+        BulkOnlyTransportDevice {
+            handle,
             bulk_in,
             bulk_out,
-
             current_tag: 0,
-
             selected_lun: 0,
             max_lun,
         }
@@ -133,18 +132,63 @@ impl BulkOnlyTransportDevice {
             cbw.cbwcb
         );
         let cbw_bytes = cbw.to_bytes();
-        self.device.write_bulk(&self.bulk_out, &cbw_bytes);
 
-        // TODO: implement proper error recovery
-        // First, implement errrors in the WIT interface though
-        // then, see section 5.3.3 and Figure 2 of the USB Mass Storage Class – Bulk Only Transport document
+        // Write CBW
+        let opts_out = TransferOptions {
+            endpoint: self.bulk_out,
+            timeout_ms: 5000,
+            stream_id: 0,
+            iso_packets: 0,
+        };
+        let xfer_cbw = self
+            .handle
+            .new_transfer(
+                TransferType::Bulk,
+                empty_setup(),
+                cbw_bytes.len() as u32,
+                opts_out,
+            )
+            .expect("CBW transfer");
+        xfer_cbw.submit_transfer(&cbw_bytes).ok();
+        await_transfer(xfer_cbw).ok();
 
-        // TODO: data stage
         let transfer_length = cbw.transfer_length as usize;
-        // Receive data
-        let data = self.device.read_bulk(&self.bulk_in, transfer_length as u64);
 
-        let csw_bytes = self.device.read_bulk(&self.bulk_in, 13);
+        // Receive Data
+        let opts_in = TransferOptions {
+            endpoint: self.bulk_in,
+            timeout_ms: 10000,
+            stream_id: 0,
+            iso_packets: 0,
+        };
+        let data = if transfer_length > 0 {
+            let xfer_data = self
+                .handle
+                .new_transfer(
+                    TransferType::Bulk,
+                    empty_setup(),
+                    transfer_length as u32,
+                    opts_in.clone(),
+                )
+                .expect("Data transfer");
+            xfer_data.submit_transfer(&[]).ok();
+            await_transfer(xfer_data).unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        // Receive CSW
+        let xfer_csw = self
+            .handle
+            .new_transfer(TransferType::Bulk, empty_setup(), 13, opts_in)
+            .expect("CSW transfer");
+        xfer_csw.submit_transfer(&[]).ok();
+        let csw_bytes = await_transfer(xfer_csw).unwrap_or_default();
+
+        if csw_bytes.len() != 13 {
+            return Err(BulkOnlyTransportError::IncorrectTag);
+        }
+
         let csw = CommandStatusWrapper::from_bytes(csw_bytes);
 
         if csw.tag != tag {
@@ -177,18 +221,60 @@ impl BulkOnlyTransportDevice {
             cbw.cbwcb
         );
         let cbw_bytes = cbw.to_bytes();
-        trace!("CBW Bytes: {:?}", cbw_bytes);
-        self.device.write_bulk(&self.bulk_out, &cbw_bytes);
 
-        // TODO: implement proper error recovery
-        // First, implement errrors in the WIT interface though
-        // then, see section 5.3.3 and Figure 2 of the USB Mass Storage Class – Bulk Only Transport document
+        let opts_out = TransferOptions {
+            endpoint: self.bulk_out,
+            timeout_ms: 5000,
+            stream_id: 0,
+            iso_packets: 0,
+        };
 
+        // Write CBW
+        let xfer_cbw = self
+            .handle
+            .new_transfer(
+                TransferType::Bulk,
+                empty_setup(),
+                cbw_bytes.len() as u32,
+                opts_out.clone(),
+            )
+            .expect("CBW transfer");
+        xfer_cbw.submit_transfer(&cbw_bytes).ok();
+        await_transfer(xfer_cbw).ok();
+
+        // Write Data
         if let Some(data) = data {
-            self.device.write_bulk(&self.bulk_out, data);
+            let xfer_data = self
+                .handle
+                .new_transfer(
+                    TransferType::Bulk,
+                    empty_setup(),
+                    data.len() as u32,
+                    opts_out,
+                )
+                .expect("Data transfer");
+            xfer_data.submit_transfer(data).ok();
+            await_transfer(xfer_data).ok();
         }
 
-        let csw_bytes = self.device.read_bulk(&self.bulk_in, 13);
+        // Receive CSW
+        let opts_in = TransferOptions {
+            endpoint: self.bulk_in,
+            timeout_ms: 5000,
+            stream_id: 0,
+            iso_packets: 0,
+        };
+        let xfer_csw = self
+            .handle
+            .new_transfer(TransferType::Bulk, empty_setup(), 13, opts_in)
+            .expect("CSW transfer");
+        xfer_csw.submit_transfer(&[]).ok();
+        let csw_bytes = await_transfer(xfer_csw).unwrap_or_default();
+
+        if csw_bytes.len() != 13 {
+            return Err(BulkOnlyTransportError::IncorrectTag);
+        }
+
         let csw = CommandStatusWrapper::from_bytes(csw_bytes);
 
         if csw.tag != tag {
@@ -206,9 +292,24 @@ impl BulkOnlyTransportDevice {
     }
 }
 
+fn empty_setup() -> TransferSetup {
+    TransferSetup {
+        bm_request_type: 0,
+        b_request: 0,
+        w_value: 0,
+        w_index: 0,
+    }
+}
+
 pub struct BulkOnlyTransportCommandBlock {
     pub command_block: Vec<u8>,
     pub transfer_length: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    In,
+    Out,
 }
 
 #[derive(Debug)]
@@ -277,7 +378,7 @@ impl CommandStatusWrapper {
             0 => CommandStatusWrapperStatus::CommandPassed,
             1 => CommandStatusWrapperStatus::CommandFailed,
             2 => CommandStatusWrapperStatus::PhaseError,
-            3..=4 => CommandStatusWrapperStatus::ReservedObsolete,
+            3..4 => CommandStatusWrapperStatus::ReservedObsolete,
             _ => CommandStatusWrapperStatus::Reserved,
         };
 

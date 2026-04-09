@@ -6,12 +6,13 @@ use std::io::{self, Read, Seek, Write};
 use bulk_only::BulkOnlyTransportDevice;
 
 use chrono::{DateTime, Local};
-use fatfs::{Dir, FileSystem, FsOptions, ReadWriteSeek};
+use fatfs::{Dir, FsOptions, ReadWriteSeek};
 use mass_storage::MassStorageDevice;
 use rand::{Fill, Rng};
 use tracing::{debug, info};
+
 #[cfg(target_arch = "wasm32")]
-use usb_wasm_bindings::device::UsbDevice;
+use usb_wasm_bindings::device::{list_devices, UsbDevice};
 
 use anyhow::anyhow;
 
@@ -19,7 +20,10 @@ pub mod bulk_only;
 pub mod mass_storage;
 
 pub fn tree(path: Option<String>) -> anyhow::Result<()> {
-    fn _tree(dir: Dir<'_, impl ReadWriteSeek>, depth: usize) -> Result<Vec<String>, io::Error> {
+    fn _tree(
+        dir: Dir<'_, impl ReadWriteSeek>,
+        depth: usize,
+    ) -> Result<Vec<String>, io::Error> {
         debug!(depth, "build_fs_tree_");
         if depth > 10 {
             return Ok(vec![]);
@@ -113,16 +117,29 @@ fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
     // Find device
     let msd = {
         let mut mass_storage_devices: Vec<MassStorageDevice> = Vec::new();
-        for device in UsbDevice::enumerate().into_iter() {
-            let configuration = device.configurations().remove(0);
-            let interface = configuration.interfaces().into_iter().find(|interface| {
-                let if_descriptor = interface.descriptor();
-                if_descriptor.interface_class == 0x08 && if_descriptor.interface_protocol == 0x50
-            });
-            if let Some(interface) = interface {
+        let devices =
+            list_devices().map_err(|e| anyhow!("Failed to list devices: {:?}", e))?;
+
+        for (device, _desc, _loc) in devices {
+            let device: UsbDevice = device;
+            let config = device
+                .get_active_configuration_descriptor()
+                .map_err(|e| anyhow!("Failed to get config: {:?}", e))?;
+            let mut bot_interface = None;
+
+            for iface in &config.interfaces {
+                if iface.interface_class == 0x08 && iface.interface_protocol == 0x50 {
+                    bot_interface = Some(iface.clone());
+                    break;
+                }
+            }
+
+            if let Some(interface) = bot_interface {
                 let bulk_only_transport =
-                    BulkOnlyTransportDevice::new(device, configuration, interface);
-                mass_storage_devices.push(MassStorageDevice::new(bulk_only_transport).unwrap());
+                    BulkOnlyTransportDevice::new(device, config, interface);
+                if let Ok(msd) = MassStorageDevice::new(bulk_only_transport) {
+                    mass_storage_devices.push(msd);
+                }
             }
         }
 
@@ -217,7 +234,7 @@ fn get_mass_storage_device() -> anyhow::Result<MassStorageDevice> {
     Ok(msd)
 }
 
-fn get_filesystem() -> anyhow::Result<FileSystem<impl ReadWriteSeek>> {
+fn get_filesystem() -> anyhow::Result<fatfs::FileSystem<impl ReadWriteSeek>> {
     let mut msd = get_mass_storage_device().unwrap();
     // let mut msd =
     //     BufStream::with_capacities(24576, 24576, get_mass_storage_device().unwrap());
@@ -238,7 +255,7 @@ fn get_filesystem() -> anyhow::Result<FileSystem<impl ReadWriteSeek>> {
     .unwrap();
 
     debug!("Initialized Filesystem");
-    Ok(FileSystem::new(fat_slice, FsOptions::new())?)
+    Ok(fatfs::FileSystem::new(fat_slice, FsOptions::new())?)
 }
 
 // WARNING: This will probably break your filesystem, as this function just writes random blocks to the device
@@ -297,7 +314,8 @@ pub fn benchmark_raw_speed(
             }
             let end_write = std::time::Instant::now();
             let write_time = end_write - start_write;
-            report.sequential_write_speed += seq_test_size as f64 / write_time.as_secs_f64();
+            report.sequential_write_speed +=
+                seq_test_size as f64 / write_time.as_secs_f64();
         }
         report.sequential_write_speed /= test_count as f64;
 
@@ -310,7 +328,8 @@ pub fn benchmark_raw_speed(
             }
             let end_read = std::time::Instant::now();
             let read_time = end_read - start_read;
-            report.sequential_read_speed += seq_test_size as f64 / read_time.as_secs_f64();
+            report.sequential_read_speed +=
+                seq_test_size as f64 / read_time.as_secs_f64();
         }
         report.sequential_read_speed /= test_count as f64;
 
@@ -322,7 +341,9 @@ pub fn benchmark_raw_speed(
             data[..].try_fill(&mut rng)?;
 
             let addresses: Vec<u32> = (0..rnd_num_repetitions)
-                .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
+                .map(|_| {
+                    rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS)
+                })
                 .collect();
             let start_write = std::time::Instant::now();
             for address in addresses {
@@ -336,7 +357,9 @@ pub fn benchmark_raw_speed(
 
         for _ in 0..test_count {
             let addresses: Vec<u32> = (0..rnd_num_repetitions)
-                .map(|_| rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS))
+                .map(|_| {
+                    rng.gen_range(8192..properties.total_number_of_blocks - NUM_BLOCKS)
+                })
                 .collect();
             let start_read = std::time::Instant::now();
             for address in addresses {
@@ -376,9 +399,6 @@ pub fn benchmark_raw_speed(
             report.random_read_speed
         )?;
     }
-    // for report in reports {
-
-    // }
 
     Ok(())
 }

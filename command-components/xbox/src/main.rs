@@ -1,5 +1,5 @@
-use usb_wasm_bindings::device::UsbDevice;
-use usb_wasm_bindings::types::Filter;
+use usb_wasm_bindings::device::{list_devices, DeviceHandle};
+use usb_wasm_bindings::transfers::{await_transfer, TransferOptions, TransferSetup, TransferType};
 
 use std::io;
 use std::io::Write;
@@ -78,7 +78,9 @@ impl std::fmt::Display for XboxControllerState {
 }
 
 pub fn parse_xbox_controller_data(data: &[u8]) -> XboxControllerState {
-    assert!(data.len() >= 18, "data is too short");
+    if data.len() < 18 {
+        return XboxControllerState::default();
+    }
     let lt = byteorder::LittleEndian::read_u16(&data[6..]) as f32 / 1023.0;
     let rt = byteorder::LittleEndian::read_u16(&data[8..]) as f32 / 1023.0;
 
@@ -113,50 +115,39 @@ pub fn parse_xbox_controller_data(data: &[u8]) -> XboxControllerState {
 }
 
 pub fn main() -> anyhow::Result<()> {
-    let xbox_controller = UsbDevice::request_device(&Filter {
-        vendor_id: Some(0x045e),
-        product_id: Some(0x02ea),
-        ..Default::default()
-    })
-    .ok_or(anyhow!("No Xbox Controller found!"))?;
+    let devices = list_devices().map_err(|e| anyhow!("{:?}", e))?;
+    let (xbox_device, _, _) = devices
+        .into_iter()
+        .find(|(_, desc, _)| desc.vendor_id == 0x045e && desc.product_id == 0x02ea)
+        .ok_or(anyhow!("No Xbox Controller found!"))?;
 
-    // Select interface
-    let configuration = xbox_controller
-        .configurations()
-        .into_iter()
-        .find(|c| c.descriptor().number == 1)
-        .ok_or(anyhow!("Could not find configuration"))?;
-    let interface = configuration
-        .interfaces()
-        .into_iter()
-        .find(|i| {
-            i.descriptor().interface_number == 0x00 && i.descriptor().alternate_setting == 0x00
-        })
-        .ok_or(anyhow!("Could not find interface"))?;
-    let endpoint = interface
-        .endpoints()
-        .into_iter()
-        .find(|e| {
-            e.descriptor().direction == usb_wasm_bindings::types::Direction::In
-                && e.descriptor().endpoint_number == 0x02
-        })
-        .ok_or(anyhow!("Could not find IN endpoint"))?;
-    let endpoint_out = interface
-        .endpoints()
-        .into_iter()
-        .find(|e| {
-            e.descriptor().direction == usb_wasm_bindings::types::Direction::Out
-                && e.descriptor().endpoint_number == 0x02
-        })
-        .ok_or(anyhow!("Could not find OUT endpoint"))?;
+    let handle = xbox_device.open().map_err(|e| anyhow!("{:?}", e))?;
 
-    // Open device
-    xbox_controller.open();
-    // xbox_controller.select_configuration(&configuration);
-    xbox_controller.claim_interface(&interface);
+    // Select interface (Interface 0, Alt 0 is usually the main controller interface)
+    let iface_num = 0;
+    let ep_in_addr = 0x81;
+    let ep_out_addr = 0x02;
 
-    // Set up the device
-    xbox_controller.write_interrupt(&endpoint_out, &[0x05, 0x20, 0x00, 0x01, 0x00]);
+    handle.claim_interface(iface_num).map_err(|e| anyhow!("{:?}", e))?;
+
+    // Set up the device (rumble/lights initialization)
+    let setup = TransferSetup {
+        bm_request_type: 0,
+        b_request: 0,
+        w_value: 0,
+        w_index: 0,
+    };
+    let out_opts = TransferOptions {
+        endpoint: ep_out_addr,
+        timeout_ms: 1000,
+        stream_id: 0,
+        iso_packets: 0,
+    };
+    
+    let init_xfer = handle.new_transfer(TransferType::Interrupt, setup.clone(), 5, out_opts.clone())
+        .map_err(|e| anyhow!("{:?}", e))?;
+    init_xfer.submit_transfer(&[0x05, 0x20, 0x00, 0x01, 0x00]).ok();
+    await_transfer(init_xfer).ok();
 
     println!("Connected to Xbox Controller");
     let mut previous_length = 0;
@@ -164,10 +155,21 @@ pub fn main() -> anyhow::Result<()> {
     print!("\r{} ", XboxControllerState::default()); //Print empty values first untill we get our first communication
     io::stdout().flush()?;
 
+    let in_opts = TransferOptions {
+        endpoint: ep_in_addr,
+        timeout_ms: 0, // No timeout for read loop
+        stream_id: 0,
+        iso_packets: 0,
+    };
+
     loop {
-        let data =
-            xbox_controller.read_interrupt(&endpoint, endpoint.descriptor().max_packet_size as u64);
-        if data.len() == 18 {
+        let read_xfer = handle.new_transfer(TransferType::Interrupt, setup.clone(), 64, in_opts.clone())
+            .map_err(|e| anyhow!("{:?}", e))?;
+        read_xfer.submit_transfer(&[]).map_err(|e| anyhow!("{:?}", e))?;
+        
+        let data = await_transfer(read_xfer).map_err(|e| anyhow!("{:?}", e))?;
+        
+        if data.len() >= 18 {
             let state = parse_xbox_controller_data(&data[0..18]);
             let state_str = state.to_string();
             if state_str.len() < previous_length {
