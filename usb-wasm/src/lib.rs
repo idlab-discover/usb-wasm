@@ -2,35 +2,29 @@ use wasmtime::component::ResourceTable;
 use wasmtime_wasi::{WasiView, IoView, WasiCtx};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
-use tract_onnx::prelude::{RunnableModel, TypedFact, TypedOp, Graph, Tensor};
 
 pub mod usb_backend;
 pub use usb_backend::{HostUsbBackend, LibusbBackend, UsbDevice, UsbDeviceHandle};
 
-pub mod bindings {
-    wasmtime::component::bindgen!({
-        world: "host",
-        path: "wit",
-        with: {
-            "component:usb/transfers/transfer": crate::UsbTransfer,
-            "component:usb/device/usb-device": crate::UsbDevice,
-            "component:usb/device/device-handle": crate::UsbDeviceHandle,
-            "component:usb/cv/frame-stream": crate::FrameStream,
-            "component:usb/cv/object-detector": crate::ObjectDetector,
-        },
-        async: {
-            only_imports: ["await-transfer"]
-        },
-    });
-}
+wasmtime::component::bindgen!({
+    world: "host",
+    path: "../wit",
+    with: {
+         "component:usb/transfers@0.2.1/transfer": crate::UsbTransfer,
+         "component:usb/device@0.2.1/usb-device": crate::UsbDevice,
+         "component:usb/device@0.2.1/device-handle": crate::UsbDeviceHandle,
+         "component:usb/cv/frame-stream": crate::host_impl::FrameStreamInnerStub,
+         "component:usb/cv/object-detector": crate::host_impl::ObjectDetectorInner,
+    },
+});
 
-pub use bindings::component::usb;
-pub use usb::errors::LibusbError;
-pub use usb::device::UsbSpeed;
+
+pub use self::component::usb::errors::LibusbError;
+pub use self::component::usb::device::UsbSpeed;
 
 impl LibusbError {
-    pub fn from_raw(code: i32) -> Self {
-        match code {
+    pub fn from_raw(res: i32) -> Self {
+        match res {
             -1 => LibusbError::Io,
             -2 => LibusbError::InvalidParam,
             -3 => LibusbError::Access,
@@ -56,14 +50,12 @@ impl UsbSpeed {
             3 => UsbSpeed::High,
             4 => UsbSpeed::Super,
             5 => UsbSpeed::SuperPlus,
-            /* libusb speed values are slightly different but let's map reasonably */
             _ => UsbSpeed::Unknown,
         }
     }
 }
 
-// --- Host Types ---
-
+#[derive(Debug, Clone)]
 pub struct UsbTransfer {
     pub transfer: *mut libusb1_sys::libusb_transfer,
     pub completed: Arc<AtomicBool>,
@@ -75,6 +67,10 @@ pub struct UsbTransfer {
 impl UsbTransfer {
     pub fn submit(&self) -> Result<(), LibusbError> {
         unsafe {
+            // CRITICAL: Synchronize the libusb_transfer buffer pointer with our internal Vec.
+            // If the buffer was updated or moved, the old pointer in transfer-struct is dangling.
+            (*self.transfer).buffer = self.buffer.as_ptr() as *mut u8;
+            
             let res = libusb1_sys::libusb_submit_transfer(self.transfer);
             if res < 0 {
                 return Err(LibusbError::from_raw(res));
@@ -86,7 +82,7 @@ impl UsbTransfer {
     pub fn cancel(&self) -> Result<(), LibusbError> {
         unsafe {
             let res = libusb1_sys::libusb_cancel_transfer(self.transfer);
-            if res < 0 && res != -10 { // Ignore NOT_FOUND (already completed/cancelled)
+            if res < 0 {
                 return Err(LibusbError::from_raw(res));
             }
             Ok(())
@@ -94,38 +90,8 @@ impl UsbTransfer {
     }
 }
 
-impl Drop for UsbTransfer {
-    fn drop(&mut self) {
-        unsafe {
-            libusb1_sys::libusb_free_transfer(self.transfer);
-        }
-    }
-}
-
 unsafe impl Send for UsbTransfer {}
 unsafe impl Sync for UsbTransfer {}
-
-pub struct FrameStream {
-    pub handle: UsbDeviceHandle,
-    pub iface_num: u8,
-    pub alt_setting: u8,
-    pub ep_addr: u8,
-    pub max_packet_size: u16,
-    pub actual_frame_size: u32,
-    pub packet_stride: u32,
-    pub num_packets: u32,
-    
-    // Mutable state for reassembly
-    pub frame_buffer: Arc<Mutex<Vec<u8>>>,
-    pub last_fid: Arc<Mutex<u8>>,
-    pub frame_started: Arc<Mutex<bool>>,
-    pub frame_count: Arc<Mutex<u32>>,
-}
-
-pub struct ObjectDetector {
-    pub model_path: String,
-    pub model: Option<RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>>,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct USBDeviceIdentifier {
@@ -155,16 +121,15 @@ pub struct CallLog {
     pub buffer_size: Option<usize>,
 }
 
-pub struct UsbHostState {
+pub struct MyState {
     pub table: ResourceTable,
     pub wasi_ctx: wasmtime_wasi::WasiCtx,
     pub allowed_usbdevices: AllowedUSBDevices,
     pub backend: Box<dyn HostUsbBackend>,
-    pub enable_yolo: bool,
     pub call_logs: Arc<Mutex<Vec<CallLog>>>,
 }
 
-impl UsbHostState {
+impl MyState {
     pub fn log_call(&self, name: &str, start: std::time::Instant, buf_size: Option<usize>) {
         if let Ok(mut logs) = self.call_logs.lock() {
             logs.push(CallLog {
@@ -177,25 +142,26 @@ impl UsbHostState {
     }
 }
 
-// --- The "View" Pattern for Wasmtime v31 ---
-
-/// A view into the host state that satisfies the ResourceView requirement
-/// without conflicting with wasmtime-wasi's blanket implementation.
-pub struct UsbView<'a>(pub &'a mut UsbHostState);
-
-impl<'a> IoView for UsbView<'a> {
+impl IoView for MyState {
     fn table(&mut self) -> &mut ResourceTable {
-        &mut self.0.table
+        &mut self.table
     }
 }
 
-impl<'a> WasiView for UsbView<'a> {
+impl WasiView for MyState {
     fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.0.wasi_ctx
+        &mut self.wasi_ctx
     }
 }
 
-// The Host traits will be implemented for UsbView<'a> in host_impl.rs
+pub fn add_to_linker<T>(
+    linker: &mut wasmtime::component::Linker<T>,
+    get: impl Fn(&mut T) -> &mut MyState + Send + Sync + Copy + 'static,
+) -> wasmtime::Result<()> 
+where T: Send + 'static
+{
+    println!("[WASI-USB-HOST] Adding WASI-USB interfaces to linker...");
+    Host_::add_to_linker::<T, MyState>(linker, get)
+}
 
 mod host_impl;
-pub use host_impl::*;

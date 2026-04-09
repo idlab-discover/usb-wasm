@@ -1,13 +1,12 @@
-use crate::bindings::component::usb::descriptors::{DeviceDescriptor, ConfigurationDescriptor};
-use crate::bindings::component::usb::device::{DeviceLocation, UsbSpeed};
-use crate::bindings::component::usb::errors::LibusbError;
-use crate::bindings::component::usb::usb_hotplug::{Event, Info};
-use crate::bindings::component::usb::configuration::ConfigValue;
-use crate::bindings::component::usb::transfers::{TransferType, TransferSetup, TransferOptions};
-use crate::{UsbTransfer, AllowedUSBDevices, USBDeviceIdentifier};
+use crate::component::usb::descriptors::{DeviceDescriptor, ConfigurationDescriptor};
+use crate::component::usb::device::DeviceLocation;
+use crate::component::usb::usb_hotplug::{Event, Info};
+use crate::component::usb::configuration::ConfigValue;
+use crate::component::usb::transfers::{TransferType, TransferSetup, TransferOptions};
+use crate::{UsbTransfer, AllowedUSBDevices, USBDeviceIdentifier, LibusbError, UsbSpeed};
 
 use libusb1_sys::{
-    libusb_context, libusb_init, libusb_device, libusb_device_handle, libusb_transfer,
+    libusb_context, libusb_init, libusb_device, libusb_device_handle,
     libusb_get_device_list, libusb_free_device_list, libusb_get_device_descriptor,
     libusb_get_bus_number, libusb_get_device_address, libusb_get_port_number, libusb_get_device_speed,
     libusb_ref_device, libusb_open, libusb_close,
@@ -185,7 +184,7 @@ unsafe impl Sync for UsbDeviceHandle {}
 /// Trait defining the interface for the USB backend.
 pub trait HostUsbBackend: Send + Sync {
     fn init(&mut self) -> Result<(), LibusbError>;
-    fn list_devices(&mut self, allowed_devices: &AllowedUSBDevices) -> Result<Vec<(UsbDevice, DeviceDescriptor, DeviceLocation)>, LibusbError>;
+    fn list_devices(&mut self, allowed_devices: &AllowedUSBDevices) -> Result<Vec<(UsbDevice, DeviceDescriptor, DeviceLocation, Option<String>)>, LibusbError>;
     fn enable_hotplug(&mut self, allowed_devices: AllowedUSBDevices) -> Result<(), LibusbError>;
     fn poll_events(&mut self) -> Vec<(Event, Info, UsbDevice)>;
 
@@ -236,6 +235,13 @@ impl LibusbBackend {
             hotplug_enabled: false,
             hotplug_handle: None,
         }
+    }
+
+    fn ensure_init(&mut self) -> Result<(), LibusbError> {
+        if self.context.is_some() {
+            return Ok(());
+        }
+        self.init()
     }
 }
 
@@ -288,7 +294,11 @@ impl HostUsbBackend for LibusbBackend {
             let mut ctx: *mut libusb_context = std::ptr::null_mut();
             let res = libusb_init(&mut ctx);
             if res < 0 {
-                return Err(LibusbError::from_raw(res));
+                let err = LibusbError::from_raw(res);
+                if res == -3 { // LIBUSB_ERROR_ACCESS
+                    eprintln!("ERROR: Access denied to USB devices. Try running with 'sudo'.");
+                }
+                return Err(err);
             }
 
             self.context = Some(ctx);
@@ -310,11 +320,13 @@ impl HostUsbBackend for LibusbBackend {
         }
     }
 
-    fn list_devices(&mut self, allowed_devices: &AllowedUSBDevices) -> Result<Vec<(UsbDevice, DeviceDescriptor, DeviceLocation)>, LibusbError> {
+    fn list_devices(&mut self, allowed_devices: &AllowedUSBDevices) -> Result<Vec<(UsbDevice, DeviceDescriptor, DeviceLocation, Option<String>)>, LibusbError> {
+        self.ensure_init()?;
         unsafe {
             let mut list_ptr: *mut *mut libusb_device = std::ptr::null_mut();
+            let context = self.context.ok_or(LibusbError::NotFound)?;
             let cnt = libusb_get_device_list(
-                self.context.ok_or(LibusbError::NotFound)?,
+                context,
                 &mut list_ptr as *mut _ as *mut _,
             );
             if cnt < 0 {
@@ -365,7 +377,25 @@ impl HostUsbBackend for LibusbBackend {
                     num_configurations: device_desc.bNumConfigurations,
                 };
                 
-                devices.push((resource, descriptor, location));
+                let mut product_name = None;
+                if device_desc.iProduct > 0 {
+                    let mut handle_ptr: *mut libusb1_sys::libusb_device_handle = std::ptr::null_mut();
+                    if libusb_open(dev, &mut handle_ptr) == 0 {
+                        let mut buf = [0u8; 255];
+                        let len = libusb1_sys::libusb_get_string_descriptor_ascii(
+                            handle_ptr, 
+                            device_desc.iProduct, 
+                            buf.as_mut_ptr(), 
+                            buf.len() as i32
+                        );
+                        if len > 0 {
+                            product_name = Some(String::from_utf8_lossy(&buf[..len as usize]).to_string());
+                        }
+                        libusb_close(handle_ptr);
+                    }
+                }
+
+                devices.push((resource, descriptor, location, product_name));
             }
             libusb_free_device_list(list_ptr, 1);
             Ok(devices)
@@ -373,7 +403,8 @@ impl HostUsbBackend for LibusbBackend {
     }
 
     fn enable_hotplug(&mut self, allowed_devices: AllowedUSBDevices) -> Result<(), LibusbError> {
-         if self.hotplug_enabled {
+        self.ensure_init()?;
+        if self.hotplug_enabled {
             return Ok(());
         }
         unsafe {
@@ -415,14 +446,21 @@ impl HostUsbBackend for LibusbBackend {
     }
 
     fn open(&mut self, device: &UsbDevice) -> Result<UsbDeviceHandle, LibusbError> {
+        self.ensure_init()?;
         let device_ptr = device.device;
+        eprintln!("[WASI-USB-DEBUG] Attempting libusb_open on {:?}", device_ptr);
         unsafe {
             let mut handle_ptr: *mut libusb_device_handle = std::ptr::null_mut();
-            let res = libusb_open(device_ptr, &mut handle_ptr);
+            let res = libusb1_sys::libusb_open(device_ptr, &mut handle_ptr);
+            eprintln!("[WASI-USB-DEBUG] libusb_open result: {}, handle: {:?}", res, handle_ptr);
             if res < 0 {
                 return Err(LibusbError::from_raw(res));
             }
-            let _ = libusb_set_auto_detach_kernel_driver(handle_ptr, 1);
+            
+            // On some platforms we might need auto-detach
+            let _ = libusb1_sys::libusb_set_auto_detach_kernel_driver(handle_ptr, 1);
+            
+            eprintln!("[WASI-USB-DEBUG] Device opened successfully");
             Ok(UsbDeviceHandle { handle: handle_ptr })
         }
     }
@@ -460,6 +498,10 @@ impl HostUsbBackend for LibusbBackend {
 
     fn claim_interface(&mut self, handle: &UsbDeviceHandle, ifac: u8) -> Result<(), LibusbError> {
         unsafe {
+            // BEST EFFORT: Try detaching existing kernel driver. 
+            // On macOS this usually returns NOT_SUPPORTED but signaling intent can help.
+            let _ = libusb1_sys::libusb_detach_kernel_driver(handle.handle, ifac as i32);
+            
             let res = libusb_claim_interface(handle.handle, ifac as i32);
             if res < 0 {
                 return Err(LibusbError::from_raw(res));
@@ -548,19 +590,24 @@ impl HostUsbBackend for LibusbBackend {
     }
 
     fn get_active_configuration_descriptor(&mut self, device: &UsbDevice) -> Result<ConfigurationDescriptor, LibusbError> {
+        self.ensure_init()?;
+        eprintln!("[WASI-USB-DEBUG] get_active_configuration_descriptor for {:?}", device.device);
         unsafe {
             let mut config_desc: *const libusb1_sys::libusb_config_descriptor = std::ptr::null();
             let res = libusb1_sys::libusb_get_active_config_descriptor(device.device, &mut config_desc);
+            eprintln!("[WASI-USB-DEBUG] libusb_get_active_config_descriptor result: {}, ptr: {:?}", res, config_desc);
             if res < 0 {
                 return Err(LibusbError::from_raw(res));
             }
             let descriptor = generate_config_descriptor(&*config_desc);
             libusb1_sys::libusb_free_config_descriptor(config_desc);
+            eprintln!("[WASI-USB-DEBUG] get_active_configuration_descriptor success");
             Ok(descriptor)
         }
     }
 
     fn get_configuration_descriptor(&mut self, device: &UsbDevice, config_index: u8) -> Result<ConfigurationDescriptor, LibusbError> {
+        self.ensure_init()?;
         unsafe {
              let mut config_desc: *const libusb1_sys::libusb_config_descriptor = std::ptr::null();
             let res = libusb1_sys::libusb_get_config_descriptor(device.device, config_index, &mut config_desc);
@@ -574,6 +621,7 @@ impl HostUsbBackend for LibusbBackend {
     }
 
     fn get_configuration_descriptor_by_value(&mut self, device: &UsbDevice, config_value: u8) -> Result<ConfigurationDescriptor, LibusbError> {
+        self.ensure_init()?;
          unsafe {
             let mut config_desc: *const libusb1_sys::libusb_config_descriptor = std::ptr::null();
             let res = libusb1_sys::libusb_get_config_descriptor_by_value(device.device, config_value, &mut config_desc);
@@ -588,7 +636,7 @@ impl HostUsbBackend for LibusbBackend {
 }
 
 unsafe fn generate_config_descriptor(raw_descriptor: &libusb1_sys::libusb_config_descriptor) -> ConfigurationDescriptor {
-    use crate::usb::descriptors::{InterfaceDescriptor, EndpointDescriptor};
+    use crate::component::usb::descriptors::{InterfaceDescriptor, EndpointDescriptor};
     let mut interfaces: Vec<InterfaceDescriptor> = Vec::new();
     for i in 0..raw_descriptor.bNumInterfaces {
         let interface = &*raw_descriptor.interface.wrapping_add(i as usize);
