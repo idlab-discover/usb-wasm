@@ -203,7 +203,7 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
         0
     };
 
-    // 6. SET_CUR commit.
+    // 6. SET_CUR commit — with the EXACT bytes the camera returned in step 5.
     let commit_setup = TransferSetup {
         bm_request_type: 0x21,
         b_request: UVC_SET_CUR,
@@ -211,8 +211,28 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
         w_index: ctrl_idx,
     };
     ctrl(&handle, commit_setup, &negotiated, negotiated.len() as u32)?;
+    println!("Handshake complete. Negotiated frame size: {} bytes.", actual_frame_size);
 
-    // 7. Switch to high-bandwidth alt setting.
+    // 7. Enable Auto White Balance on the Processing Unit AFTER the handshake,
+    //    BEFORE activating the high-bandwidth alt-setting.
+    //    PU_WHITE_BALANCE_TEMPERATURE_AUTO_CONTROL = 0x0B
+    //    w_index = (unit_id << 8) | vc_interface_number
+    println!("Enabling Auto White Balance (Processing Unit 2)...");
+    let vc_iface: u16 = 0; // VideoControl interface is always 0
+    let pu_unit:  u16 = 2; // Processing Unit ID
+    let awb_setup = TransferSetup {
+        bm_request_type: 0x21,
+        b_request: UVC_SET_CUR,
+        w_value: 0x0B00, // PU_WHITE_BALANCE_TEMPERATURE_AUTO_CONTROL
+        w_index: (pu_unit << 8) | vc_iface,
+    };
+    // Ignore errors: not all cameras expose this control.
+    if let Ok(data) = ctrl(&handle, awb_setup, &[1], 1) {
+        let _ = data;
+        println!("  Auto White Balance enabled.");
+    }
+
+    // 8. Switch to high-bandwidth alt setting — only after ISP is configured.
     handle
         .set_interface_altsetting(iface_num, alt_setting)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
