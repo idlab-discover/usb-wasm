@@ -1,0 +1,203 @@
+package component:usb;
+
+interface errors {
+    enum libusb-error {
+        io,
+        invalid-param,
+        access,
+        no-device,
+        not-found,
+        busy,
+        timeout,
+        overflow,
+        pipe,
+        interrupted,
+        no-mem,
+        not-supported,
+        other,
+    }
+}
+
+interface transfers {
+    use errors.{libusb-error};
+
+    enum transfer-type {
+        control,
+        bulk,
+        interrupt,
+        isochronous,
+    }
+
+    record transfer-setup {
+        bm-request-type: u8,
+        b-request: u8,
+        w-value: u16,
+        w-index: u16,
+    }
+
+    record transfer-options {
+        endpoint: u8,
+        timeout-ms: u32,
+        stream-id: u32,
+        iso-packets: u32,
+    }
+
+    resource transfer {
+        submit-transfer: func(data: list<u8>) -> result<_, libusb-error>;
+        cancel-transfer: func() -> result<_, libusb-error>;
+    }
+
+    enum iso-packet-status {
+        success,
+        error,
+        timed-out,
+        cancelled,
+        stall,
+        no-device,
+        overflow,
+    }
+
+    record iso-packet {
+        actual-length: u32,
+        status: iso-packet-status,
+    }
+
+    record transfer-result {
+        data: list<u8>,
+        packets: list<iso-packet>,
+    }
+
+    await-transfer: func(xfer: borrow<transfer>) -> result<transfer-result, libusb-error>;
+}
+
+interface descriptors {
+    record device-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        usb-version-bcd: u16,
+        device-class: u8,
+        device-subclass: u8,
+        device-protocol: u8,
+        max-packet-size0: u8,
+        vendor-id: u16,
+        product-id: u16,
+        device-version-bcd: u16,
+        manufacturer-index: u8,
+        product-index: u8,
+        serial-number-index: u8,
+        num-configurations: u8,
+    }
+
+    record endpoint-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        endpoint-address: u8,
+        attributes: u8,
+        max-packet-size: u16,
+        interval: u8,
+        refresh: u8,
+        synch-address: u8,
+    }
+
+    record interface-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        interface-number: u8,
+        alternate-setting: u8,
+        endpoints: list<endpoint-descriptor>,
+        interface-class: u8,
+        interface-subclass: u8,
+        interface-protocol: u8,
+        interface-index: u8,
+    }
+
+    record configuration-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        total-length: u16,
+        interfaces: list<interface-descriptor>,
+        configuration-value: u8,
+        configuration-index: u8,
+        attributes: u8,
+        max-power: u8,
+    }
+}
+
+interface configuration {
+    variant config-value {
+        unconfigured,
+        value(u8),
+    }
+}
+
+interface device {
+    use transfers.{transfer-type, transfer-setup, transfer-options, transfer};
+    use errors.{libusb-error};
+    use descriptors.{device-descriptor, configuration-descriptor};
+    use configuration.{config-value};
+
+    resource usb-device {
+        open: func() -> result<device-handle, libusb-error>;
+        get-configuration-descriptor: func(config-index: u8) -> result<configuration-descriptor, libusb-error>;
+        get-configuration-descriptor-by-value: func(config-value: u8) -> result<configuration-descriptor, libusb-error>;
+        get-active-configuration-descriptor: func() -> result<configuration-descriptor, libusb-error>;
+    }
+
+    resource device-handle {
+        get-configuration: func() -> result<u8, libusb-error>;
+        set-configuration: func(config: config-value) -> result<_, libusb-error>;
+        claim-interface: func(ifac: u8) -> result<_, libusb-error>;
+        release-interface: func(ifac: u8) -> result<_, libusb-error>;
+        set-interface-altsetting: func(ifac: u8, alt-setting: u8) -> result<_, libusb-error>;
+        clear-halt: func(endpoint: u8) -> result<_, libusb-error>;
+        reset-device: func() -> result<_, libusb-error>;
+        alloc-streams: func(num-streams: u32, endpoints: list<u8>) -> result<_, libusb-error>;
+        free-streams: func(endpoints: list<u8>) -> result<_, libusb-error>;
+        kernel-driver-active: func(ifac: u8) -> result<bool, libusb-error>;
+        detach-kernel-driver: func(ifac: u8) -> result<_, libusb-error>;
+        attach-kernel-driver: func(ifac: u8) -> result<_, libusb-error>;
+        new-transfer: func(xfer-type: transfer-type, setup: transfer-setup, buf-size: u32, opts: transfer-options) -> result<transfer, libusb-error>;
+    }
+
+    enum usb-speed {
+        unknown,
+        low,
+        full,
+        high,
+        super,
+        super-plus,
+        super-plus-X2,
+    }
+
+    record device-location {
+        bus-number: u8,
+        device-address: u8,
+        port-number: u8,
+        speed: usb-speed,
+    }
+
+    init: func() -> result<_, libusb-error>;
+    exit: func();
+
+    list-devices: func() -> result<list<tuple<usb-device, device-descriptor, device-location>>, libusb-error>;
+}
+
+interface usb-hotplug {
+    use device.{usb-device, device-location};
+    use wasi:io/poll@0.2.5.{pollable};
+
+    enum event {
+        arrived,
+        left,
+    }
+
+    record info {
+        bus: u8,
+        address: u8,
+        vendor: u16,
+        product: u16,
+    }
+
+    enable-hotplug: func() -> result<pollable, string>;
+    poll-events: func() -> list<tuple<event, usb-device, info>>;
+}
