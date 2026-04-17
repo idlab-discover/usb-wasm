@@ -246,16 +246,22 @@ fn decode_and_detect(
             let cy = output[[0, 1, i]];
             let bw = output[[0, 2, i]];
             let bh = output[[0, 3, i]];
-            let x = ((cx - bw / 2.0) * f.width as f32).max(0.0) as u32;
-            let y = ((cy - bh / 2.0) * f.height as f32).max(0.0) as u32;
+            // YOLO outputs normalised coords (0-1) relative to the 640×640
+            // input. Scale back to the *decoded* image dimensions, not the
+            // RawFrame's estimated width/height (which uses the YUYV formula
+            // and is wrong for MJPEG frames).
+            let iw = img.width() as f32;
+            let ih = img.height() as f32;
+            let x = ((cx - bw / 2.0) * iw).max(0.0) as u32;
+            let y = ((cy - bh / 2.0) * ih).max(0.0) as u32;
             detections.push(Detection {
                 label: COCO_CLASSES[class_id].to_string(),
                 confidence: max_score,
                 box_: BoundingBox {
                     origin: Point { x, y },
                     size: Size {
-                        width: (bw * f.width as f32) as u32,
-                        height: (bh * f.height as f32) as u32,
+                        width: (bw * iw) as u32,
+                        height: (bh * ih) as u32,
                     },
                 },
             });
