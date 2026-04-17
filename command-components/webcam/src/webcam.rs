@@ -150,6 +150,7 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
         .claim_interface(iface_num)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
     handle.set_interface_altsetting(iface_num, 0).ok();
+    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let ctrl_idx = iface_num as u16;
     let no_timeout = TransferOptions {
@@ -159,18 +160,47 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
         iso_packets: 0,
     };
 
-    // Helper: do a control transfer and return the data.
+    // Helper: do a control transfer and return the data portion only.
+    //
+    // NB. The host prepends (and returns) an 8-byte USB control setup packet
+    // in every control transfer's buffer. For reads we strip those 8 bytes.
+    // For writes we must prepend a matching setup packet ourselves, because
+    // the host's `submit_transfer` replaces the entire buffer with what the
+    // guest provides (clobbering the setup prefix it built in `new_transfer`).
     let ctrl = |h: &DeviceHandle,
                 setup: TransferSetup,
-                out_data: &[u8],
-                buf_size: u32|
+                payload: &[u8],
+                payload_len: u32|
      -> Result<Vec<u8>> {
         let xfer = h
-            .new_transfer(TransferType::Control, setup, buf_size, no_timeout.clone())
+            .new_transfer(TransferType::Control, setup.clone(), payload_len, no_timeout.clone())
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        xfer.submit_transfer(out_data)
+
+        // Build buffer = [8-byte setup | payload] when we have payload to send.
+        let submit_buf: Vec<u8> = if payload.is_empty() {
+            Vec::new()
+        } else {
+            let mut buf = Vec::with_capacity(8 + payload.len());
+            buf.push(setup.bm_request_type);
+            buf.push(setup.b_request);
+            buf.push((setup.w_value & 0xFF) as u8);
+            buf.push((setup.w_value >> 8) as u8);
+            buf.push((setup.w_index & 0xFF) as u8);
+            buf.push((setup.w_index >> 8) as u8);
+            buf.push((payload_len & 0xFF) as u8);
+            buf.push((payload_len >> 8) as u8);
+            buf.extend_from_slice(payload);
+            buf
+        };
+
+        xfer.submit_transfer(&submit_buf)
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let result = await_transfer(&xfer).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let mut result = await_transfer(&xfer).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+        // Strip the 8-byte setup prefix from the returned buffer.
+        if result.data.len() >= 8 {
+            result.data.drain(..8);
+        }
         Ok(result.data)
     };
 
@@ -236,6 +266,12 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
     handle
         .set_interface_altsetting(iface_num, alt_setting)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    // 9. Camera ISP warm-up — critical for Auto White Balance to converge.
+    //    Without this sleep, the first frames are captured before AWB
+    //    stabilises → pink/magenta cast locked into the whole session.
+    println!("Camera ISP warm-up (2 seconds)...");
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     Ok(WebcamFrameStream {
         handle,

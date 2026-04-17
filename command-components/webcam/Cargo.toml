@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 log = "0.4"
+jpeg-decoder = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 usb-wasm-bindings = { workspace = true, features = ["webcam-provider"] }

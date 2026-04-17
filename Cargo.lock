@@ -1362,6 +1362,9 @@ name = "jpeg-decoder"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "js-sys"
@@ -3612,6 +3615,7 @@ name = "webcam"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "jpeg-decoder",
  "libc",
  "libusb1-sys",
  "log",
