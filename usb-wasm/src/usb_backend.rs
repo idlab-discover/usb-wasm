@@ -1,8 +1,8 @@
-use crate::component::usb::descriptors::{DeviceDescriptor, ConfigurationDescriptor};
-use crate::component::usb::device::DeviceLocation;
-use crate::component::usb::usb_hotplug::{Event, Info};
-use crate::component::usb::configuration::ConfigValue;
-use crate::component::usb::transfers::{TransferType, TransferSetup, TransferOptions};
+use crate::bindings::component::usb::descriptors::{DeviceDescriptor, ConfigurationDescriptor};
+use crate::bindings::component::usb::device::DeviceLocation;
+use crate::bindings::component::usb::usb_hotplug::{Event, Info};
+use crate::bindings::component::usb::configuration::ConfigValue;
+use crate::bindings::component::usb::transfers::{TransferType, TransferSetup, TransferOptions};
 use crate::{UsbTransfer, AllowedUSBDevices, USBDeviceIdentifier, LibusbError, UsbSpeed};
 
 use libusb1_sys::{
@@ -12,8 +12,8 @@ use libusb1_sys::{
     libusb_ref_device, libusb_open, libusb_close,
     libusb_get_configuration, libusb_set_configuration, libusb_claim_interface, libusb_release_interface,
     libusb_set_interface_alt_setting, libusb_clear_halt, libusb_reset_device,
-    libusb_set_auto_detach_kernel_driver,
     libusb_kernel_driver_active, libusb_detach_kernel_driver, libusb_attach_kernel_driver,
+
     libusb_has_capability, libusb_hotplug_callback_handle, libusb_hotplug_register_callback,
     libusb_handle_events_timeout_completed,
     libusb_alloc_transfer,
@@ -187,6 +187,7 @@ pub trait HostUsbBackend: Send + Sync {
     fn list_devices(&mut self, allowed_devices: &AllowedUSBDevices) -> Result<Vec<(UsbDevice, DeviceDescriptor, DeviceLocation, Option<String>)>, LibusbError>;
     fn enable_hotplug(&mut self, allowed_devices: AllowedUSBDevices) -> Result<(), LibusbError>;
     fn poll_events(&mut self) -> Vec<(Event, Info, UsbDevice)>;
+    fn exit(&mut self);
 
     // Device operations
     fn open(&mut self, device: &UsbDevice) -> Result<UsbDeviceHandle, LibusbError>;
@@ -274,8 +275,8 @@ extern "system" fn hotplug_cb(
             product: desc.idProduct,
         };
         let event = match ev {
-            LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED => Event::ARRIVED,
-            LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT => Event::LEFT,
+            LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED => Event::Arrived,
+            LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT => Event::Left,
             _ => return 0,
         };
 
@@ -633,10 +634,22 @@ impl HostUsbBackend for LibusbBackend {
             Ok(descriptor)
         }
     }
+
+    fn exit(&mut self) {
+        if let Some(flag) = self.event_loop_flag.take() {
+            flag.store(false, Ordering::SeqCst);
+        }
+        if let Some(thread) = self.event_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(ctx) = self.context.take() {
+            unsafe { libusb1_sys::libusb_exit(ctx); }
+        }
+    }
 }
 
 unsafe fn generate_config_descriptor(raw_descriptor: &libusb1_sys::libusb_config_descriptor) -> ConfigurationDescriptor {
-    use crate::component::usb::descriptors::{InterfaceDescriptor, EndpointDescriptor};
+    use crate::bindings::component::usb::descriptors::{InterfaceDescriptor, EndpointDescriptor};
     let mut interfaces: Vec<InterfaceDescriptor> = Vec::new();
     for i in 0..raw_descriptor.bNumInterfaces {
         let interface = &*raw_descriptor.interface.wrapping_add(i as usize);

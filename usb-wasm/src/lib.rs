@@ -6,21 +6,24 @@ use std::sync::atomic::AtomicBool;
 pub mod usb_backend;
 pub use usb_backend::{HostUsbBackend, LibusbBackend, UsbDevice, UsbDeviceHandle};
 
-wasmtime::component::bindgen!({
-    world: "host",
-    path: "../wit",
-    with: {
-         "component:usb/transfers@0.2.1/transfer": crate::UsbTransfer,
-         "component:usb/device@0.2.1/usb-device": crate::UsbDevice,
-         "component:usb/device@0.2.1/device-handle": crate::UsbDeviceHandle,
-         "component:usb/cv/frame-stream": crate::host_impl::FrameStreamInnerStub,
-         "component:usb/cv/object-detector": crate::host_impl::ObjectDetectorInner,
-    },
-});
+pub mod bindings {
+    wasmtime::component::bindgen!({
+        world: "host",
+        path: "../wit",
+        async: true,
+        with: {
+            "component:usb/transfers/transfer": crate::UsbTransfer,
+            "component:usb/device/usb-device": crate::UsbDevice,
+            "component:usb/device/device-handle": crate::UsbDeviceHandle,
+            "wasi:io/poll@0.2.5": wasmtime_wasi::bindings::io::poll,
+        },
+    });
+}
 
 
-pub use self::component::usb::errors::LibusbError;
-pub use self::component::usb::device::UsbSpeed;
+pub use self::bindings::component::usb::errors::LibusbError;
+pub use self::bindings::component::usb::device::UsbSpeed;
+
 
 impl LibusbError {
     pub fn from_raw(res: i32) -> Self {
@@ -67,8 +70,6 @@ pub struct UsbTransfer {
 impl UsbTransfer {
     pub fn submit(&self) -> Result<(), LibusbError> {
         unsafe {
-            // CRITICAL: Synchronize the libusb_transfer buffer pointer with our internal Vec.
-            // If the buffer was updated or moved, the old pointer in transfer-struct is dangling.
             (*self.transfer).buffer = self.buffer.as_ptr() as *mut u8;
             
             let res = libusb1_sys::libusb_submit_transfer(self.transfer);
@@ -114,33 +115,16 @@ impl AllowedUSBDevices {
     }
 }
 
-pub struct CallLog {
-    pub function_name: String,
-    pub start_time: std::time::Instant,
-    pub duration: std::time::Duration,
-    pub buffer_size: Option<usize>,
-}
-
 pub struct MyState {
     pub table: ResourceTable,
     pub wasi_ctx: wasmtime_wasi::WasiCtx,
     pub allowed_usbdevices: AllowedUSBDevices,
     pub backend: Box<dyn HostUsbBackend>,
-    pub call_logs: Arc<Mutex<Vec<CallLog>>>,
 }
 
 impl MyState {
-    pub fn log_call(&self, name: &str, start: std::time::Instant, buf_size: Option<usize>) {
-        if let Ok(mut logs) = self.call_logs.lock() {
-            logs.push(CallLog {
-                function_name: name.to_string(),
-                start_time: start,
-                duration: start.elapsed(),
-                buffer_size: buf_size,
-            });
-        }
-    }
 }
+
 
 impl IoView for MyState {
     fn table(&mut self) -> &mut ResourceTable {
@@ -161,7 +145,12 @@ pub fn add_to_linker<T>(
 where T: Send + 'static
 {
     println!("[WASI-USB-HOST] Adding WASI-USB interfaces to linker...");
-    Host_::add_to_linker::<T, MyState>(linker, get)
+    
+    self::bindings::component::usb::device::add_to_linker(linker, get)?;
+    self::bindings::component::usb::transfers::add_to_linker(linker, get)?;
+    self::bindings::component::usb::usb_hotplug::add_to_linker(linker, get)?;
+
+    Ok(())
 }
 
 mod host_impl;
