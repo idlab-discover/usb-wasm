@@ -7,7 +7,7 @@ edition = "2021"
 byteorder = "1.5.0"
 colored = "2.0.4"
 anyhow = { workspace = true }
-usb-wasm-bindings = { workspace = true }
+usb-wasm-bindings = { workspace = true, default-features = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
