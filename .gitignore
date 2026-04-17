@@ -3,3 +3,12 @@ out/
 .vscode/
 artifacts/
 *.png
+
+# ── Debug Logs & Artifacts ───────────────────────────────────────────────────
+*.log
+*.csv
+*.out
+perf.data*
+flamegraph.svg
+build_errors*.txt
+expanded.rs

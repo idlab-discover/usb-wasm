@@ -3,13 +3,30 @@ name = "yolo-detector"
 version = "0.1.0"
 edition = "2021"
 
-[target.'cfg(target_family = "wasm")'.dependencies]
-usb-wasm-bindings = { workspace = true }
+[dependencies]
+usb-wasm-bindings = { workspace = true, features = ["yolo-command"], default-features = false }
 wit-bindgen = "0.42.1"
 anyhow = { workspace = true }
+tract-onnx = { version = "0.21.1", default-features = false }
+image = { version = "0.24.7", default-features = false, features = ["jpeg", "png"] }
+ndarray = "0.15.6"
 
-[lib]
-crate-type = ["cdylib"]
+
+
+
 
 [package.metadata.component]
 package = "component:yolo-detector"
+
+[package.metadata.component.target]
+path = "../../wit"
+world = "yolo-command"
+
+
+[package.metadata.component.dependencies]
+"wasi:cli" = "0.2.5"
+"wasi:clocks" = "0.2.5"
+"wasi:random" = "0.2.5"
+"wasi:sockets" = "0.2.5"
+"wasi:io" = "0.2.5"
+"wasi:filesystem" = "0.2.5"

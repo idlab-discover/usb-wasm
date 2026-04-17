@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-usb-wasm-bindings = { workspace = true }
+usb-wasm-bindings = { workspace = true, default-features = true }

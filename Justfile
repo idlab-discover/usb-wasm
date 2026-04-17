@@ -1,56 +1,65 @@
+JUST := "/opt/homebrew/bin/just"
+
 lsusb:
-    just build-lsusb
+    {{JUST}} build-lsusb
     cargo build
     sudo ./target/debug/wasmtime-usb ./out/lsusb.wasm
 
 xbox:
-    just build-xbox
+    {{JUST}} build-xbox
     cargo build
     sudo ./target/debug/wasmtime-usb ./out/xbox.wasm
 
 ping *arg:
-    just build-ping
+    {{JUST}} build-ping
     cargo build --release
     sudo ./target/release/wasmtime-usb --dir=. ./out/ping.wasm -- {{arg}}
 
 control:
-    just build-control
+    {{JUST}} build-control
     cargo build
     sudo ./target/debug/wasmtime-usb ./out/control.wasm
 
 mass-storage *arg:
-    just build-mass-storage
+    {{JUST}} build-mass-storage
     cargo build --release
     sudo ./target/release/wasmtime-usb --dir=. ./out/mass-storage.wasm -- {{arg}}
 
 enumerate-devices-go:
-    just build-enumerate-devices-go
+    {{JUST}} build-enumerate-devices-go
     cargo run -- ./command-components/enumerate-devices-go/out/main.component.wasm
 
 enumerate-devices-rust:
-    just build-enumerate-devices-rust
+    {{JUST}} build-enumerate-devices-rust
     cargo build
     sudo ./target/debug/wasmtime-usb ./out/enumerate-devices-rust.wasm
 
-webcam-cv:
-    just build-webcam-cv
+webcam:
+    {{JUST}} build-webcam
     cargo build
-    sudo ./target/debug/wasmtime-usb ./out/webcam-cv.wasm
+    sudo ./target/debug/wasmtime-usb ./out/webcam.wasm
+
+
+yolo:
+    {{JUST}} build-yolo-composed
+    cargo build
+    sudo ./target/debug/wasmtime-usb --dir=. ./out/yolo-composed.wasm
+
 
 native-webcam:
     cargo run -p webcam-cv
 
 ps5-maze:
-    just build-ps5-maze
+    {{JUST}} build-ps5-maze
     cargo build
     sudo ./target/debug/wasmtime-usb ./out/ps5-maze.wasm
 
 flamegraph-mass-storage:
-    just build-mass-storage
+    {{JUST}} build-mass-storage
     cargo flamegraph --no-inline --bin wasmtime-usb -- ./out/mass-storage.wasm benchmark
 
 perf-mass-storage:
-    just build-mass-storage
+    {{JUST}} build-mass-storage
     cargo build --release
     perf record --call-graph dwarf -k mono ./target/release/wasmtime-usb  --profile ./out/mass-storage.wasm benchmark
 
@@ -58,56 +67,64 @@ build-runtime:
     cargo build
 
 build-lsusb:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     cargo build -p lsusb --target=wasm32-wasip2
     cp target/wasm32-wasip2/debug/lsusb.wasm out/lsusb.wasm
 
 build-xbox:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     cargo build -p xbox --target=wasm32-wasip2
     cp target/wasm32-wasip2/debug/xbox.wasm out/xbox.wasm
 
 build-xbox-maze:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     cargo build -p xbox-maze --target=wasm32-wasip2
     cp target/wasm32-wasip2/debug/xbox_maze.wasm out/xbox-maze.wasm
 
 build-ping:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     cargo build -p ping --release --target=wasm32-wasip2
     cp target/wasm32-wasip2/release/ping.wasm out/ping.wasm
 
 build-control:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     cargo build -p control --target=wasm32-wasip2
     cp target/wasm32-wasip2/debug/control.wasm out/control.wasm
 
 build-mass-storage:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     cargo build -p mass-storage --release --target=wasm32-wasip2
     cp target/wasm32-wasip2/release/mass_storage.wasm out/mass-storage.wasm
 
 build-enumerate-devices-rust:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     cargo build -p enumerate-devices-rust --release --target=wasm32-wasip2
     cp target/wasm32-wasip2/release/enumerate_devices_rust.wasm out/enumerate-devices-rust.wasm
 
 SYSROOT := "/Users/sibrenwieme/Documents/Masterproef/usb-wasm/rusb-wasi/examples/wasi-workload/wasi-sysroot"
 
-build-webcam-cv:
-    just regenerate-bindings
+build-webcam:
+    {{JUST}} regenerate-bindings
     mkdir -p out
-    @echo "WARNING: webcam-cv lacks WASI-compatible deps (nokhwa). Building WIP..."
+    @echo "Building webcam component..."
     PKG_CONFIG_DIR="" \
     PKG_CONFIG_LIBDIR="{{SYSROOT}}/usr/lib/pkgconfig:{{SYSROOT}}/usr/share/pkgconfig" \
     PKG_CONFIG_SYSROOT_DIR="{{SYSROOT}}" \
     PKG_CONFIG_ALLOW_CROSS=1 \
     LIBUSB_STATIC=1 \
-    cargo build -p webcam-cv --target wasm32-wasip2 --release
-    cp target/wasm32-wasip2/release/webcam_cv.wasm out/webcam-cv.wasm
+    cargo build -p webcam --target wasm32-wasip2 --release
+    cp target/wasm32-wasip2/release/webcam.wasm out/webcam.wasm
+
+
+build-yolo:
+    {{JUST}} regenerate-bindings
+    mkdir -p out
+    cargo build -p yolo-detector --target wasm32-wasip2 --release
+    cp target/wasm32-wasip2/release/yolo-detector.wasm out/yolo-detector.wasm
+
 
 build-ps5-maze:
-    just regenerate-bindings
+    {{JUST}} regenerate-bindings
     mkdir -p out
     PKG_CONFIG_DIR="" \
     PKG_CONFIG_LIBDIR="{{SYSROOT}}/usr/lib/pkgconfig:{{SYSROOT}}/usr/share/pkgconfig" \
@@ -131,3 +148,8 @@ verify:
 
 regenerate-bindings:
     cd usb-wasm-bindings && ./regenerate-bindings.sh
+
+build-yolo-composed: build-webcam build-yolo
+    # Step 3: Compose. wac plug links consumer (yolo-detector) to producer (webcam).
+    ~/.cargo/bin/wac plug out/yolo-detector.wasm \
+        --plug out/webcam.wasm -o out/yolo-composed.wasm

@@ -13,8 +13,9 @@
 use usb_wasm_bindings::component::usb::{
     device::DeviceHandle,
     transfers::{await_transfer, TransferOptions, TransferSetup, TransferType},
-    cv::Frame,
 };
+
+use crate::bindings::exports::component::wasm_usb_app::raw_frame_stream::RawFrame as ExportRawFrame;
 
 use anyhow::{bail, Result};
 
@@ -56,45 +57,20 @@ impl WebcamFrameStream {
         open_uvc_stream(index).expect("Failed to open UVC stream")
     }
 
-    pub fn read_frame(&self) -> Result<Frame> {
-        self.capture_frame()
+    pub fn capture_frame_internal(&self) -> Result<ExportRawFrame> {
+        self.capture_uvc_frame()
     }
 }
 
 #[cfg(target_family = "wasm")]
-impl usb_wasm_bindings::exports::component::usb::cv::GuestFrameStream for WebcamFrameStream {
-    fn new(index: u32) -> Self {
-        WebcamFrameStream::new(index)
-    }
-    fn read_frame(&self) -> Result<usb_wasm_bindings::exports::component::usb::cv::Frame, String> {
-        self.capture_frame().map_err(|e| e.to_string()).map(|f| {
-            usb_wasm_bindings::exports::component::usb::cv::Frame {
-                data: f.data,
-                width: f.width,
-                height: f.height,
-            }
-        })
-    }
-}
-
-// ─── UnimplementedObjectDetector stub ────────────────────────────────────────
-
-/// Stub — satisfies the cv::Guest trait; actual YOLO runs on the host.
-#[cfg(target_family = "wasm")]
-pub struct UnimplementedObjectDetector;
-
-#[cfg(target_family = "wasm")]
-impl usb_wasm_bindings::exports::component::usb::cv::GuestObjectDetector
-    for UnimplementedObjectDetector
+impl crate::bindings::exports::component::wasm_usb_app::raw_frame_stream::GuestFrameSource
+    for WebcamFrameStream
 {
-    fn new(_model_path: String) -> Self {
-        panic!("object-detector is implemented on the host, not in webcam-cv")
+    fn new(index: u32) -> Self {
+        open_uvc_stream(index).expect("Failed to open UVC stream")
     }
-    fn detect(
-        &self,
-        _f: usb_wasm_bindings::exports::component::usb::cv::Frame,
-    ) -> Result<Vec<usb_wasm_bindings::exports::component::usb::cv::Detection>, String> {
-        Err("unimplemented".to_string())
+    fn next_frame(&self) -> Result<ExportRawFrame, String> {
+        self.capture_uvc_frame().map_err(|e| e.to_string())
     }
 }
 
@@ -110,19 +86,25 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
     // 1. Find the Nth UVC device.
     let all_devices = device::list_devices().map_err(|e| anyhow::anyhow!("{:?}", e))?;
     println!("Found {} USB devices total.", all_devices.len());
-    for (i, (dev, desc, _)) in all_devices.iter().enumerate() {
-        println!("  Device #{}: ID {:04x}:{:04x}, Class 0x{:02x}", 
-            i, desc.vendor_id, desc.product_id, desc.device_class);
+    for (i, (_dev, desc, _)) in all_devices.iter().enumerate() {
+        println!(
+            "  Device #{}: ID {:04x}:{:04x}, Class 0x{:02x}",
+            i, desc.vendor_id, desc.product_id, desc.device_class
+        );
     }
 
     let mut uvc: Vec<_> = all_devices
         .into_iter()
         .filter(|(_, desc, _)| {
-            let is_uvc = desc.device_class == 0x0E || desc.device_class == 0xEF || desc.device_class == 0x00;
+            let is_uvc =
+                desc.device_class == 0x0E || desc.device_class == 0xEF || desc.device_class == 0x00;
             is_uvc
         })
         .collect();
-    println!("Found {} potential UVC devices (Class 0E, EF, or 00).", uvc.len());
+    println!(
+        "Found {} potential UVC devices (Class 0E, EF, or 00).",
+        uvc.len()
+    );
 
     let (dev, _, _) = uvc
         .drain(..)
@@ -151,7 +133,12 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
             let mult = 1 + ((ep.max_packet_size >> 11) & 0x03);
             let effective = base_mps * mult;
             if best.map_or(true, |(_, _, _, s)| effective > s) {
-                best = Some((iface.interface_number, iface.alternate_setting, ep.endpoint_address, effective));
+                best = Some((
+                    iface.interface_number,
+                    iface.alternate_setting,
+                    ep.endpoint_address,
+                    effective,
+                ));
             }
         }
     }
@@ -159,24 +146,47 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
         best.ok_or_else(|| anyhow::anyhow!("No UVC streaming interface found"))?;
 
     // 4. Claim interface and start at alt 0 (zero-bandwidth).
-    handle.claim_interface(iface_num).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    handle
+        .claim_interface(iface_num)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
     handle.set_interface_altsetting(iface_num, 0).ok();
 
     let ctrl_idx = iface_num as u16;
-    let no_timeout = TransferOptions { endpoint: 0, timeout_ms: 2000, stream_id: 0, iso_packets: 0 };
+    let no_timeout = TransferOptions {
+        endpoint: 0,
+        timeout_ms: 2000,
+        stream_id: 0,
+        iso_packets: 0,
+    };
 
     // Helper: do a control transfer and return the data.
-    let ctrl = |h: &DeviceHandle, setup: TransferSetup, out_data: &[u8], buf_size: u32| -> Result<Vec<u8>> {
-        let xfer = h.new_transfer(TransferType::Control, setup, buf_size, no_timeout.clone())
+    let ctrl = |h: &DeviceHandle,
+                setup: TransferSetup,
+                out_data: &[u8],
+                buf_size: u32|
+     -> Result<Vec<u8>> {
+        let xfer = h
+            .new_transfer(TransferType::Control, setup, buf_size, no_timeout.clone())
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        xfer.submit_transfer(out_data).map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        let result = await_transfer(xfer).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        xfer.submit_transfer(out_data)
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let result = await_transfer(&xfer).map_err(|e| anyhow::anyhow!("{:?}", e))?;
         Ok(result.data)
     };
 
     // 5. GET_CUR probe → modify → SET_CUR probe → GET_CUR probe (negotiated).
-    let probe_get_setup = TransferSetup { bm_request_type: 0xA1, b_request: UVC_GET_CUR, w_value: UVC_VS_PROBE_CONTROL, w_index: ctrl_idx };
-    let probe_set_setup = TransferSetup { bm_request_type: 0x21, b_request: UVC_SET_CUR, w_value: UVC_VS_PROBE_CONTROL, w_index: ctrl_idx };
+    let probe_get_setup = TransferSetup {
+        bm_request_type: 0xA1,
+        b_request: UVC_GET_CUR,
+        w_value: UVC_VS_PROBE_CONTROL,
+        w_index: ctrl_idx,
+    };
+    let probe_set_setup = TransferSetup {
+        bm_request_type: 0x21,
+        b_request: UVC_SET_CUR,
+        w_value: UVC_VS_PROBE_CONTROL,
+        w_index: ctrl_idx,
+    };
 
     let mut probe_data = ctrl(&handle, probe_get_setup.clone(), &[], 34)?;
     if probe_data.len() >= 4 {
@@ -194,11 +204,17 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
     };
 
     // 6. SET_CUR commit.
-    let commit_setup = TransferSetup { bm_request_type: 0x21, b_request: UVC_SET_CUR, w_value: UVC_VS_COMMIT_CONTROL, w_index: ctrl_idx };
+    let commit_setup = TransferSetup {
+        bm_request_type: 0x21,
+        b_request: UVC_SET_CUR,
+        w_value: UVC_VS_COMMIT_CONTROL,
+        w_index: ctrl_idx,
+    };
     ctrl(&handle, commit_setup, &negotiated, negotiated.len() as u32)?;
 
     // 7. Switch to high-bandwidth alt setting.
-    handle.set_interface_altsetting(iface_num, alt_setting)
+    handle
+        .set_interface_altsetting(iface_num, alt_setting)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
     Ok(WebcamFrameStream {
@@ -220,7 +236,7 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
 
 #[cfg(target_family = "wasm")]
 impl WebcamFrameStream {
-    fn capture_frame(&self) -> Result<Frame> {
+    fn capture_uvc_frame(&self) -> Result<ExportRawFrame> {
         let buffer_size = self.num_packets * self.packet_stride;
         let opts = TransferOptions {
             endpoint: self.ep_addr,
@@ -228,15 +244,26 @@ impl WebcamFrameStream {
             stream_id: 0,
             iso_packets: self.num_packets,
         };
-        let setup = TransferSetup { bm_request_type: 0, b_request: 0, w_value: 0, w_index: 0 };
+        let setup = TransferSetup {
+            bm_request_type: 0,
+            b_request: 0,
+            w_value: 0,
+            w_index: 0,
+        };
 
         for _attempt in 0..2000 {
             let xfer = self
                 .handle
-                .new_transfer(TransferType::Isochronous, setup.clone(), buffer_size, opts.clone())
+                .new_transfer(
+                    TransferType::Isochronous,
+                    setup.clone(),
+                    buffer_size,
+                    opts.clone(),
+                )
                 .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-            xfer.submit_transfer(&[]).map_err(|e| anyhow::anyhow!("{:?}", e))?;
-            let result = await_transfer(xfer).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            xfer.submit_transfer(&[])
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            let result = await_transfer(&xfer).map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
             let stride = self.packet_stride as usize;
             let mut offset = 0usize;
@@ -251,9 +278,13 @@ impl WebcamFrameStream {
                 let pkt_data = &result.data[offset..end];
                 offset += stride;
 
-                if pkt_data.len() < 2 { continue; }
+                if pkt_data.len() < 2 {
+                    continue;
+                }
                 let hdr_len = pkt_data[0] as usize;
-                if hdr_len < 2 || hdr_len > pkt_data.len() { continue; }
+                if hdr_len < 2 || hdr_len > pkt_data.len() {
+                    continue;
+                }
                 let hdr_flags = pkt_data[1];
                 let is_eof = (hdr_flags & 0x02) != 0;
                 let fid = hdr_flags & 0x01;
@@ -272,7 +303,11 @@ impl WebcamFrameStream {
 
                     if complete.len() >= MIN_FRAME_BYTES {
                         let (w, h) = guess_resolution(complete.len(), self.actual_frame_size);
-                        return Ok(Frame { data: complete, width: w, height: h });
+                        return Ok(ExportRawFrame {
+                            data: complete,
+                            width: w,
+                            height: h,
+                        });
                     }
                 } else {
                     if !st.frame_started && !payload.is_empty() {
@@ -289,7 +324,11 @@ impl WebcamFrameStream {
 
                         if complete.len() >= MIN_FRAME_BYTES {
                             let (w, h) = guess_resolution(complete.len(), self.actual_frame_size);
-                            return Ok(Frame { data: complete, width: w, height: h });
+                            return Ok(ExportRawFrame {
+                                data: complete,
+                                width: w,
+                                height: h,
+                            });
                         }
                     } else {
                         st.last_fid = fid;
@@ -303,9 +342,17 @@ impl WebcamFrameStream {
 
 fn guess_resolution(frame_size: usize, _negotiated: u32) -> (u32, u32) {
     const KNOWN: &[(u32, u32)] = &[
-        (1920, 1080), (1280, 720), (640, 480), (352, 288),
-        (320, 240), (320, 180), (320, 120), (176, 144),
-        (160, 144), (160, 120), (160, 90),
+        (1920, 1080),
+        (1280, 720),
+        (640, 480),
+        (352, 288),
+        (320, 240),
+        (320, 180),
+        (320, 120),
+        (176, 144),
+        (160, 144),
+        (160, 120),
+        (160, 90),
     ];
     for &(w, h) in KNOWN {
         let expected = (w * h * 2) as usize;
@@ -341,10 +388,16 @@ pub fn run_webcam() -> Result<()> {
             {
                 break;
             }
-            match stream.read_frame() {
+            match stream.capture_uvc_frame() {
                 Ok(f) => {
                     frame_idx += 1;
-                    println!("Frame #{}: {}x{} ({} bytes)", frame_idx, f.width, f.height, f.data.len());
+                    println!(
+                        "Frame #{}: {}x{} ({} bytes)",
+                        frame_idx,
+                        f.width,
+                        f.height,
+                        f.data.len()
+                    );
                 }
                 Err(e) => eprintln!("Capture error: {e}"),
             }

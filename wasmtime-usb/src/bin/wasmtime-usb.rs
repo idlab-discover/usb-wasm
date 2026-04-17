@@ -51,11 +51,9 @@ async fn main() -> Result<()> {
     let command = wasmtime_wasi::bindings::Command::instantiate_async(&mut store, &component, &linker).await?;
     
     let result: Result<Result<(), ()>, anyhow::Error> = command.wasi_cli_run().call_run(&mut store).await;
-    
-    // Task 10: Export analytical logging results
-    let _ = store.data().export_logs("call_logs.csv");
 
     match result {
+
         Ok(Ok(())) => Ok(()),
         Ok(Err(())) => Err(anyhow::anyhow!("WASI command failed")),
         Err(e) => {

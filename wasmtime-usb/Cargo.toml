@@ -15,4 +15,4 @@ wasmtime-wasi = { workspace = true }
 tokio = { version = "1.36", features = ["full"] }
 log = "0.4"
 env_logger = "0.11"
-csv = "1.4.0"
+

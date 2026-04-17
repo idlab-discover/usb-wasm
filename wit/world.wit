@@ -1,48 +1,75 @@
-package component:usb@0.2.1;
+package component:wasm-usb-app;
+
+/// Generic raw frame stream — no USB semantics.
+interface raw-frame-stream {
+    record raw-frame {
+        data:   list<u8>,
+        width:  u32,
+        height: u32,
+    }
+
+    resource frame-source {
+        constructor(index: u32);
+        next-frame: func() -> result<raw-frame, string>;
+    }
+}
 
 world host {
-    import transfers;
-    import errors;
-    import device;
-    import descriptors;
-    import configuration;
-    import usb-hotplug;
-    import cv;
-
-    export transfers;
-    export errors;
-    export device;
-    export descriptors;
-    export configuration;
-    export usb-hotplug;
-    export cv;
+    import component:usb/transfers;
+    import component:usb/errors;
+    import component:usb/device;
+    import component:usb/descriptors;
+    import component:usb/configuration;
+    import component:usb/usb-hotplug;
 }
 
-world guest {
-    import transfers;
-    import errors;
-    import device;
-    import descriptors;
-    import configuration;
-    import usb-hotplug;
-    import cv;
-}
+world composed-app {
+    import component:usb/transfers;
+    import component:usb/errors;
+    import component:usb/device;
+    import component:usb/descriptors;
+    import component:usb/configuration;
+    import component:usb/usb-hotplug;
 
-world cguest {
-    import transfers;
-    import errors;
-    import device;
-    import descriptors;
-    import configuration;
-    import usb-hotplug;
-    import cv;
-    
     import wasi:cli/environment@0.2.5;
     import wasi:cli/exit@0.2.5;
     import wasi:cli/stderr@0.2.5;
     import wasi:cli/stdin@0.2.5;
     import wasi:cli/stdout@0.2.5;
+    import wasi:filesystem/types@0.2.5;
+    import wasi:filesystem/preopens@0.2.5;
 
-    export cv;
+    export wasi:cli/run@0.2.5;
+}
+
+world webcam-provider-world {
+    import component:usb/transfers;
+    import component:usb/errors;
+    import component:usb/device;
+    import component:usb/descriptors;
+    import component:usb/configuration;
+    import component:usb/usb-hotplug;
+
+    import wasi:io/streams@0.2.5;
+    import wasi:cli/environment@0.2.5;
+
+    export raw-frame-stream;
+}
+
+world webcam-export-only {
+    export raw-frame-stream;
+}
+
+world yolo-command-world {
+    import raw-frame-stream;
+
+    import wasi:cli/environment@0.2.5;
+    import wasi:cli/exit@0.2.5;
+    import wasi:cli/stderr@0.2.5;
+    import wasi:cli/stdin@0.2.5;
+    import wasi:cli/stdout@0.2.5;
+    import wasi:filesystem/types@0.2.5;
+    import wasi:filesystem/preopens@0.2.5;
+
     export wasi:cli/run@0.2.5;
 }
