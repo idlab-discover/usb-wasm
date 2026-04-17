@@ -9,5 +9,9 @@ edition = "2021"
 wit-bindgen = "0.42.1"
 
 [features]
-std = []
-traits = []
+default = ["usb-guest"]
+usb-guest = []
+std = ["usb-guest"]
+traits = ["usb-guest"]
+webcam-provider = []
+yolo-command = []
