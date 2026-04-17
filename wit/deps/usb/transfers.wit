@@ -1,0 +1,53 @@
+package component:usb;
+
+interface transfers {
+    use errors.{libusb-error};
+
+    enum transfer-type {
+        control,
+        bulk,
+        interrupt,
+        isochronous,
+    }
+
+    record transfer-setup {
+        bm-request-type: u8,
+        b-request: u8,
+        w-value: u16,
+        w-index: u16,
+    }
+
+    record transfer-options {
+        endpoint: u8,
+        timeout-ms: u32,
+        stream-id: u32,
+        iso-packets: u32,
+    }
+
+    resource transfer {
+        submit-transfer: func(data: list<u8>) -> result<_, libusb-error>;
+        cancel-transfer: func() -> result<_, libusb-error>;
+    }
+
+    enum iso-packet-status {
+        success,
+        error,
+        timed-out,
+        cancelled,
+        stall,
+        no-device,
+        overflow,
+    }
+
+    record iso-packet {
+        actual-length: u32,
+        status: iso-packet-status,
+    }
+
+    record transfer-result {
+        data: list<u8>,
+        packets: list<iso-packet>,
+    }
+
+    await-transfer: func(xfer: borrow<transfer>) -> result<transfer-result, libusb-error>;
+}

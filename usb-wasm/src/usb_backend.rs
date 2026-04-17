@@ -18,6 +18,8 @@ use libusb1_sys::{
     libusb_handle_events_timeout_completed,
     libusb_alloc_transfer,
     libusb_fill_bulk_transfer, libusb_fill_interrupt_transfer, libusb_fill_control_transfer, libusb_fill_iso_transfer,
+    libusb_fill_bulk_stream_transfer,
+    libusb_alloc_streams, libusb_free_streams,
 };
 use libusb1_sys::constants::{
     LIBUSB_CAP_HAS_HOTPLUG, LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED, LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT,
@@ -71,16 +73,31 @@ impl UsbDeviceHandle {
 
             match xfer_type {
                 TransferType::Bulk => {
-                    libusb_fill_bulk_transfer(
-                        transfer,
-                        self.handle,
-                        opts.endpoint,
-                        buffer.as_mut_ptr(),
-                        buf_size as i32,
-                        transfer_callback,
-                        user_data_ptr,
-                        opts.timeout_ms,
-                    );
+                    if opts.stream_id != 0 {
+                        // USB 3.0 Bulk Streams (e.g. UAS)
+                        libusb_fill_bulk_stream_transfer(
+                            transfer,
+                            self.handle,
+                            opts.endpoint,
+                            opts.stream_id,
+                            buffer.as_mut_ptr(),
+                            buf_size as i32,
+                            transfer_callback,
+                            user_data_ptr,
+                            opts.timeout_ms as u32,
+                        );
+                    } else {
+                        libusb_fill_bulk_transfer(
+                            transfer,
+                            self.handle,
+                            opts.endpoint,
+                            buffer.as_mut_ptr(),
+                            buf_size as i32,
+                            transfer_callback,
+                            user_data_ptr,
+                            opts.timeout_ms,
+                        );
+                    }
                 }
                 TransferType::Interrupt => {
                     libusb_fill_interrupt_transfer(
@@ -582,12 +599,43 @@ impl HostUsbBackend for LibusbBackend {
         }
     }
 
-    fn alloc_streams(&mut self, _handle: &UsbDeviceHandle, _num_streams: u32, _endpoints: Vec<u8>) -> Result<(), LibusbError> {
-        Err(LibusbError::NotSupported)
+    fn alloc_streams(&mut self, handle: &UsbDeviceHandle, num_streams: u32, mut endpoints: Vec<u8>) -> Result<(), LibusbError> {
+        if endpoints.is_empty() {
+            return Err(LibusbError::InvalidParam);
+        }
+        unsafe {
+            let res = libusb_alloc_streams(
+                handle.handle,
+                num_streams,
+                endpoints.as_mut_ptr(),
+                endpoints.len() as i32,
+            );
+            if res < 0 {
+                return Err(LibusbError::from_raw(res));
+            }
+            // libusb returns the number of streams actually allocated (may be less
+            // than requested). We treat a non-negative return as success; the guest
+            // should assume at most `num_streams` are usable.
+            eprintln!("[WASI-USB-HOST] alloc_streams: requested {}, got {}", num_streams, res);
+            Ok(())
+        }
     }
 
-    fn free_streams(&mut self, _handle: &UsbDeviceHandle, _endpoints: Vec<u8>) -> Result<(), LibusbError> {
-        Err(LibusbError::NotSupported)
+    fn free_streams(&mut self, handle: &UsbDeviceHandle, mut endpoints: Vec<u8>) -> Result<(), LibusbError> {
+        if endpoints.is_empty() {
+            return Err(LibusbError::InvalidParam);
+        }
+        unsafe {
+            let res = libusb_free_streams(
+                handle.handle,
+                endpoints.as_mut_ptr(),
+                endpoints.len() as i32,
+            );
+            if res < 0 {
+                return Err(LibusbError::from_raw(res));
+            }
+            Ok(())
+        }
     }
 
     fn get_active_configuration_descriptor(&mut self, device: &UsbDevice) -> Result<ConfigurationDescriptor, LibusbError> {

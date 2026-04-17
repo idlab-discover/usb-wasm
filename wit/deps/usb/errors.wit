@@ -1,0 +1,19 @@
+package component:usb;
+
+interface errors {
+    enum libusb-error {
+        io,
+        invalid-param,
+        access,
+        no-device,
+        not-found,
+        busy,
+        timeout,
+        overflow,
+        pipe,
+        interrupted,
+        no-mem,
+        not-supported,
+        other,
+    }
+}

@@ -1,0 +1,54 @@
+package component:usb;
+
+interface descriptors {
+    record device-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        usb-version-bcd: u16,
+        device-class: u8,
+        device-subclass: u8,
+        device-protocol: u8,
+        max-packet-size0: u8,
+        vendor-id: u16,
+        product-id: u16,
+        device-version-bcd: u16,
+        manufacturer-index: u8,
+        product-index: u8,
+        serial-number-index: u8,
+        num-configurations: u8,
+    }
+
+    record endpoint-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        endpoint-address: u8,
+        attributes: u8,
+        max-packet-size: u16,
+        interval: u8,
+        refresh: u8,
+        synch-address: u8,
+    }
+
+    record interface-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        interface-number: u8,
+        alternate-setting: u8,
+        endpoints: list<endpoint-descriptor>,
+        interface-class: u8,
+        interface-subclass: u8,
+        interface-protocol: u8,
+        interface-index: u8,
+    }
+
+    record configuration-descriptor {
+        length: u8,
+        descriptor-type: u8,
+        total-length: u16,
+        interfaces: list<interface-descriptor>,
+        configuration-value: u8,
+        configuration-index: u8,
+        attributes: u8,
+        max-power: u8,
+    }
+}

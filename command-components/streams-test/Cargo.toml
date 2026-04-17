@@ -1,0 +1,13 @@
+[package]
+name = "streams-test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "streams-test"
+
+[dependencies]
+anyhow = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+usb-wasm-bindings = { workspace = true, features = ["usb-guest"] }

@@ -1,0 +1,21 @@
+package component:usb;
+
+interface usb-hotplug {
+    use device.{usb-device, device-location};
+    use wasi:io/poll@0.2.5.{pollable};
+
+    enum event {
+        arrived,
+        left,
+    }
+
+    record info {
+        bus: u8,
+        address: u8,
+        vendor: u16,
+        product: u16,
+    }
+
+    enable-hotplug: func() -> result<pollable, string>;
+    poll-events: func() -> list<tuple<event, usb-device, info>>;
+}
