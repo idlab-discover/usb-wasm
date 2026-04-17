@@ -42,9 +42,10 @@ pub struct Detection {
 pub fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let model_path = args.get(1).map(|s| s.as_str()).unwrap_or("yolov8n.onnx");
-    
+    let out_dir   = args.get(2).map(|s| s.as_str()).unwrap_or(".");
+
     println!("Initializing YOLOv8 detector in WASM (model: {})...", model_path);
-    
+
     // 1. Load the model purely in WASM
     let model = tract_onnx::onnx()
         .model_for_path(model_path)
@@ -57,28 +58,47 @@ pub fn main() -> Result<()> {
     println!("Initializing FrameSource for camera #{}...", camera_index);
     let stream = FrameSource::new(camera_index);
 
-    println!("Detection loop started. Press Ctrl+C to stop.");
+    println!("Detection loop started. Saving annotated frames to '{}'.", out_dir);
+    let mut frame_idx = 0u32;
     loop {
         match stream.next_frame() {
             Ok(frame) => {
                 let start = std::time::Instant::now();
-                match process_and_detect(&model, &frame) {
-
-
-                    Ok(detections) => {
+                match decode_and_detect(&model, &frame) {
+                    Ok((mut img, detections)) => {
                         let duration = start.elapsed();
-                        // Clear screen (ANSI)
-                        print!("\x1B[2J\x1B[H");
-                        println!("Detected {} objects (Inference time: {:?}):", detections.len(), duration);
+
+                        // Annotate: draw bounding boxes on the decoded image
                         for det in &detections {
-                            println!(
-                                "- {}: {:.1}% at ({}, {})",
-                                det.label,
-                                det.confidence * 100.0,
-                                det.box_.origin.x,
-                                det.box_.origin.y,
+                            let b = &det.box_;
+                            draw_rect(
+                                &mut img,
+                                b.origin.x, b.origin.y,
+                                b.size.width, b.size.height,
+                                image::Rgb([0u8, 255u8, 0u8]),
                             );
                         }
+
+                        // Save annotated frame as JPEG
+                        let path = format!("{}/frame_{:05}.jpg", out_dir, frame_idx);
+                        if let Err(e) = img.save(&path) {
+                            eprintln!("Save error {}: {}", path, e);
+                        }
+                        frame_idx += 1;
+
+                        // Console summary
+                        print!("\x1B[2J\x1B[H");
+                        println!("Frame {:05} — {} objects (inference: {:?}):", frame_idx, detections.len(), duration);
+                        for det in &detections {
+                            println!(
+                                "  [{:.0}%] {} @ ({},{}) {}×{}",
+                                det.confidence * 100.0,
+                                det.label,
+                                det.box_.origin.x, det.box_.origin.y,
+                                det.box_.size.width, det.box_.size.height,
+                            );
+                        }
+                        println!("  → saved {}", path);
                     }
                     Err(e) => eprintln!("Detection error: {}", e),
                 }
@@ -90,14 +110,16 @@ pub fn main() -> Result<()> {
 
 
 
-fn process_and_detect(model: &SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>, f: &RawFrame) -> Result<Vec<Detection>> {
-
-    // 2. Preprocessing: Frame -> RgbImage -> Resized -> Tensor
-    // Handle MJPEG or YUYV
+/// Decode the raw frame, run YOLO inference, and return the decoded RGB image
+/// alongside the detections so the caller can annotate and save it.
+fn decode_and_detect(
+    model: &SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>,
+    f: &RawFrame,
+) -> Result<(RgbImage, Vec<Detection>)> {
+    // Decode: MJPEG or YUYV fallback
     let img = if let Ok(dynamic) = image::load_from_memory(&f.data) {
         dynamic.to_rgb8()
     } else {
-        // Fallback or assume YUYV if not JPEG
         yuyv_to_rgb(&f.data, f.width, f.height)?
     };
 
@@ -150,7 +172,27 @@ fn process_and_detect(model: &SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<Type
         }
     }
 
-    Ok(nms(detections, 0.45))
+    Ok((img, nms(detections, 0.45)))
+}
+
+/// Draw a 2-pixel-thick rectangle outline onto an RGB image.
+fn draw_rect(img: &mut RgbImage, x: u32, y: u32, w: u32, h: u32, color: image::Rgb<u8>) {
+    let (iw, ih) = img.dimensions();
+    let x2 = (x + w).min(iw.saturating_sub(1));
+    let y2 = (y + h).min(ih.saturating_sub(1));
+
+    for t in 0u32..2 {
+        // Top / bottom horizontal edges
+        for px in x..=x2 {
+            if y + t < ih     { img.put_pixel(px, y + t,          color); }
+            if y2 >= t        { img.put_pixel(px, y2 - t,         color); }
+        }
+        // Left / right vertical edges
+        for py in y..=y2 {
+            if x + t < iw     { img.put_pixel(x + t,  py,         color); }
+            if x2 >= t        { img.put_pixel(x2 - t, py,         color); }
+        }
+    }
 }
 
 fn yuyv_to_rgb(data: &[u8], width: u32, height: u32) -> Result<RgbImage> {
