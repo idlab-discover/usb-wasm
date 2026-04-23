@@ -1,67 +1,38 @@
-package component:wasm-usb-app;
+package component:usb@0.2.1;
 
-/// Generic raw frame stream — no USB semantics.
-interface raw-frame-stream {
-    record raw-frame {
-        data:   list<u8>,
-        width:  u32,
-        height: u32,
-    }
-
-    resource frame-source {
-        constructor(index: u32);
-        next-frame: func() -> result<raw-frame, string>;
-    }
-}
-
+/// Host world — implemented by the wasmtime-usb / usb-wasi-host binary.
+/// The host provides all USB primitives; no UVC, MJPEG, or ML lives here.
 world host {
-    import component:usb/transfers;
-    import component:usb/errors;
-    import component:usb/device;
-    import component:usb/descriptors;
-    import component:usb/configuration;
-    import component:usb/usb-hotplug;
+    import transfers;
+    import errors;
+    import device;
+    import descriptors;
+    import configuration;
+    import usb-hotplug;
 }
 
-world composed-app {
-    import component:usb/transfers;
-    import component:usb/errors;
-    import component:usb/device;
-    import component:usb/descriptors;
-    import component:usb/configuration;
-    import component:usb/usb-hotplug;
-
-    import wasi:cli/environment@0.2.5;
-    import wasi:cli/exit@0.2.5;
-    import wasi:cli/stderr@0.2.5;
-    import wasi:cli/stdin@0.2.5;
-    import wasi:cli/stdout@0.2.5;
-    import wasi:filesystem/types@0.2.5;
-    import wasi:filesystem/preopens@0.2.5;
+/// C-guest world — used by libusb-wasi C benchmark components.
+/// Exports wasi:cli/run so the component can be invoked as a command.
+world cguest {
+    import transfers;
+    import errors;
+    import device;
+    import descriptors;
+    import configuration;
+    import usb-hotplug;
 
     export wasi:cli/run@0.2.5;
 }
 
-world webcam-provider-world {
-    import component:usb/transfers;
-    import component:usb/errors;
-    import component:usb/device;
-    import component:usb/descriptors;
-    import component:usb/configuration;
-    import component:usb/usb-hotplug;
-
-    import wasi:io/streams@0.2.5;
-    import wasi:cli/environment@0.2.5;
-
-    export raw-frame-stream;
-}
-
-world webcam-export-only {
-    export raw-frame-stream;
-}
-
-world yolo-command-world {
-    import raw-frame-stream;
+/// Webcam guest world — used by the webcam Rust component.
+/// A standalone command that captures UVC frames and prints statistics.
+world webcam-guest {
+    import transfers;
+    import errors;
+    import device;
+    import descriptors;
+    import configuration;
+    import usb-hotplug;
 
     import wasi:cli/environment@0.2.5;
     import wasi:cli/exit@0.2.5;

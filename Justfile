@@ -40,12 +40,6 @@ webcam:
     sudo ./target/debug/wasmtime-usb ./out/webcam.wasm
 
 
-yolo:
-    {{JUST}} build-yolo-composed
-    cargo build
-    sudo ./target/debug/wasmtime-usb --dir=. ./out/yolo-composed.wasm
-
-
 native-webcam:
     cargo run -p webcam-cv
 
@@ -104,7 +98,6 @@ build-enumerate-devices-rust:
 SYSROOT := "/Users/sibrenwieme/Documents/Masterproef/usb-wasm/rusb-wasi/examples/wasi-workload/wasi-sysroot"
 
 build-webcam:
-    {{JUST}} regenerate-bindings
     mkdir -p out
     @echo "Building webcam component..."
     PKG_CONFIG_DIR="" \
@@ -114,13 +107,6 @@ build-webcam:
     LIBUSB_STATIC=1 \
     cargo build -p webcam --target wasm32-wasip2 --release
     cp target/wasm32-wasip2/release/webcam.wasm out/webcam.wasm
-
-
-build-yolo:
-    {{JUST}} regenerate-bindings
-    mkdir -p out
-    cargo build -p yolo-detector --target wasm32-wasip2 --release
-    cp target/wasm32-wasip2/release/yolo-detector.wasm out/yolo-detector.wasm
 
 
 build-ps5-maze:
@@ -149,7 +135,3 @@ verify:
 regenerate-bindings:
     cd usb-wasm-bindings && ./regenerate-bindings.sh
 
-build-yolo-composed: build-webcam build-yolo
-    # Step 3: Compose. wac plug links consumer (yolo-detector) to producer (webcam).
-    ~/.cargo/bin/wac plug out/yolo-detector.wasm \
-        --plug out/webcam.wasm -o out/yolo-composed.wasm

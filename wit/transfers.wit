@@ -1,0 +1,69 @@
+package component:usb@0.2.1;
+
+interface transfers {
+    use errors.{libusb-error};
+    /// USB transfer type codes
+    enum transfer-type {
+        control,       // Control transfer (setup packet + optional data)
+        bulk,          // Bulk transfer
+        interrupt,     // Interrupt transfer
+        isochronous    // Isochronous transfer
+    }
+
+    record transfer-setup {
+        bm-request-type: u8,   // Request type (direction, type, recipient)
+        b-request: u8,         // Request (bRequest)
+        w-value: u16,          // Value (wValue)
+        w-index: u16,          // Index (wIndex)
+    }
+
+    /// USB transfer options
+    record transfer-options {
+        endpoint: u8,          // Endpoint address (number + direction)
+        timeout-ms: u32,       // Timeout in milliseconds
+        stream-id: u32,        // Stream ID for USB 3.0 bulk streams
+        iso-packets: u32,      // Number of isochronous packets to send/receive
+    }
+
+    /// Opaque resource representing a submitted USB transfer.
+    resource transfer {
+        /// Submit a transfer to the USB device with the data.
+        submit-transfer: func(data: list<u8>) -> result<_, libusb-error>;
+
+        /// Cancel a previously submitted transfer.
+        cancel-transfer: func() -> result<_, libusb-error>;
+    }
+
+    /// Wait for the transfer to complete.
+    /// Returns Ok(transfer-result) on success, or an error code on failure.
+    await-transfer: func(xfer: borrow<transfer>) -> result<transfer-result, libusb-error>;
+
+    // ── Isochronous extensions ──────────────────────────────────────────────
+
+    /// Status of a single isochronous packet within a transfer.
+    enum iso-packet-status {
+        success,
+        error,
+        timed-out,
+        cancelled,
+        stall,
+        no-device,
+        overflow,
+    }
+
+    /// Per-packet result for an isochronous transfer.
+    record iso-packet {
+        /// Effective bytes received in this packet.
+        actual-length: u32,
+        /// Completion status of this specific packet.
+        status: iso-packet-status,
+    }
+
+    /// Full result of a USB transfer.
+    /// `data` is the raw buffer.
+    /// `packets` is non-empty only for isochronous transfers.
+    record transfer-result {
+        data: list<u8>,
+        packets: list<iso-packet>,
+    }
+}

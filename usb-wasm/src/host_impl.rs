@@ -39,9 +39,6 @@ impl HostDevice for MyState {
     }
 
 
-    async fn exit(&mut self) {
-        self.backend.exit();
-    }
 }
 
 impl HostUsbDevice for MyState {
@@ -139,6 +136,11 @@ impl HostDeviceHandle for MyState {
         let res = self.table.push(transfer).map_err(|_| LibusbError::Other)?;
         Ok(res)
     }
+    async fn close(&mut self, self_: Resource<UsbDeviceHandle>) {
+        if let Ok(handle) = self.table.delete(self_) {
+            self.backend.close(handle);
+        }
+    }
     async fn drop(&mut self, rep: Resource<UsbDeviceHandle>) -> wasmtime::Result<()> {
         let _ = self.table.delete(rep);
         Ok(())
@@ -201,24 +203,14 @@ impl HostTransfer for MyState {
 // --- Hotplug ---
 
 impl HostHotplug for MyState {
-    async fn enable_hotplug(&mut self) -> Result<Resource<wasmtime_wasi::bindings::io::poll::Pollable>, String> {
-         Err("Hotplug not yet fully implemented".to_string())
+    // Leroy's WIT: enable-hotplug returns result<_, libusb-error> (no pollable).
+    async fn enable_hotplug(&mut self) -> Result<(), LibusbError> {
+        Err(LibusbError::NotSupported)
     }
-    async fn poll_events(&mut self) -> Vec<(Event, Resource<UsbDevice>, Info)> { Vec::new() }
+    // Leroy's WIT: poll-events returns list<tuple<event, info, usb-device>>.
+    async fn poll_events(&mut self) -> Vec<(Event, Info, Resource<UsbDevice>)> { Vec::new() }
 }
 
 impl crate::bindings::component::usb::errors::Host for MyState {}
 impl crate::bindings::component::usb::configuration::Host for MyState {}
 impl crate::bindings::component::usb::descriptors::Host for MyState {}
-
-impl wasmtime_wasi::bindings::io::poll::HostPollable for MyState {
-    async fn ready(&mut self, _rep: Resource<wasmtime_wasi::bindings::io::poll::Pollable>) -> wasmtime::Result<bool> {
-        Ok(true)
-    }
-    async fn block(&mut self, _rep: Resource<wasmtime_wasi::bindings::io::poll::Pollable>) -> wasmtime::Result<()> {
-        Ok(())
-    }
-    fn drop(&mut self, _rep: Resource<wasmtime_wasi::bindings::io::poll::Pollable>) -> wasmtime::Result<()> {
-        Ok(())
-    }
-}

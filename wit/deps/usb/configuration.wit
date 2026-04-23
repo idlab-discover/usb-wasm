@@ -1,8 +1,0 @@
-package component:usb;
-
-interface configuration {
-    variant config-value {
-        unconfigured,
-        value(u8),
-    }
-}

@@ -13,7 +13,6 @@ members = [
     "command-components/xbox-maze",
     "command-components/xbox",
     "command-components/identity",
-    "command-components/yolo-detector",
     "command-components/streams-test",
 ]
 

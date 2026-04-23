@@ -12,10 +12,9 @@ pub mod bindings {
         path: "../wit",
         async: true,
         with: {
-            "component:usb/transfers/transfer": crate::UsbTransfer,
-            "component:usb/device/usb-device": crate::UsbDevice,
-            "component:usb/device/device-handle": crate::UsbDeviceHandle,
-            "wasi:io/poll@0.2.5": wasmtime_wasi::bindings::io::poll,
+            "component:usb/transfers@0.2.1/transfer": crate::UsbTransfer,
+            "component:usb/device@0.2.1/usb-device": crate::UsbDevice,
+            "component:usb/device@0.2.1/device-handle": crate::UsbDeviceHandle,
         },
     });
 }

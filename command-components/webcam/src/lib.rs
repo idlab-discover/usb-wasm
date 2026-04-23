@@ -1,23 +1,30 @@
 pub mod webcam;
 
+// On wasm32-wasip2 targets, generate WIT bindings inline from the canonical WIT.
+// The webcam-guest world imports component:usb@0.2.1 USB interfaces + WASI CLI,
+// and exports wasi:cli/run so the component can be invoked as a command.
 #[cfg(target_family = "wasm")]
-pub use usb_wasm_bindings as bindings;
-
-#[cfg(target_family = "wasm")]
-mod wasm_component {
-    use super::bindings;
-    use bindings::exports::component::wasm_usb_app::raw_frame_stream::Guest;
-
-    struct WebcamComponent;
-
-    impl Guest for WebcamComponent {
-        type FrameSource = super::webcam::WebcamFrameStream;
-    }
-
-    // Use the export-only world macro to avoid importing raw-frame-stream
-    bindings::export_webcam_export_only!(WebcamComponent with_types_in bindings);
+pub mod bindings {
+    wit_bindgen::generate!({
+        world: "webcam-guest",
+        path: "../../wit",
+        pub_export_macro: true,
+        generate_all,
+    });
 }
 
-pub fn run() -> anyhow::Result<()> {
-    webcam::run_webcam()
+// Wasm component entry point: export wasi:cli/run, call run_webcam().
+#[cfg(target_family = "wasm")]
+mod wasm_component {
+    struct WebcamGuest;
+
+    impl crate::bindings::exports::wasi::cli::run::Guest for WebcamGuest {
+        fn run() -> Result<(), ()> {
+            super::webcam::run_webcam().map_err(|e| {
+                eprintln!("webcam error: {e}");
+            })
+        }
+    }
+
+    crate::bindings::export!(WebcamGuest with_types_in crate::bindings);
 }

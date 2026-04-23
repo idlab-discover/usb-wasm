@@ -292,8 +292,8 @@ extern "system" fn hotplug_cb(
             product: desc.idProduct,
         };
         let event = match ev {
-            LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED => Event::Arrived,
-            LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT => Event::Left,
+            LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED => Event::ARRIVED,
+            LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT => Event::LEFT,
             _ => return 0,
         };
 

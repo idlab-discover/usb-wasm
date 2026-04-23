@@ -9,7 +9,6 @@ log = "0.4"
 jpeg-decoder = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-usb-wasm-bindings = { workspace = true, features = ["webcam-provider"] }
 wit-bindgen = "0.42.1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -28,7 +27,7 @@ package = "component:webcam"
 
 [package.metadata.component.target]
 path = "../../wit"
-world = "webcam-provider"
+world = "webcam-guest"
 
 [package.metadata.component.dependencies]
 "wasi:cli" = "0.2.5"

@@ -7,17 +7,22 @@
 //! 4. Raw packet capture via the generic `await-transfer`
 //! 5. UVC payload header stripping + FID-based frame reassembly
 //!
-//! The host only sees generic USB operations and YOLOv8 inference.
+//! The host only sees generic USB operations; no UVC, MJPEG, or ML here.
 
 #[cfg(target_family = "wasm")]
-use usb_wasm_bindings::component::usb::{
+use crate::bindings::component::usb::{
     device::DeviceHandle,
     transfers::{await_transfer, TransferOptions, TransferSetup, TransferType},
 };
 
-use crate::bindings::exports::component::wasm_usb_app::raw_frame_stream::RawFrame as ExportRawFrame;
-
 use anyhow::{bail, Result};
+
+/// Raw captured video frame.
+pub struct RawFrame {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
 
 // ─── UVC constants ────────────────────────────────────────────────────────────
 const UVC_VS_PROBE_CONTROL: u16 = 0x0100;
@@ -57,28 +62,13 @@ impl WebcamFrameStream {
         open_uvc_stream(index).expect("Failed to open UVC stream")
     }
 
-    pub fn capture_frame_internal(&self) -> Result<ExportRawFrame> {
-        self.capture_uvc_frame()
-    }
-}
-
-#[cfg(target_family = "wasm")]
-impl crate::bindings::exports::component::wasm_usb_app::raw_frame_stream::GuestFrameSource
-    for WebcamFrameStream
-{
-    fn new(index: u32) -> Self {
-        open_uvc_stream(index).expect("Failed to open UVC stream")
-    }
-    fn next_frame(&self) -> Result<ExportRawFrame, String> {
-        self.capture_uvc_frame().map_err(|e| e.to_string())
-    }
 }
 
 // ─── UVC device open & negotiate ─────────────────────────────────────────────
 
 #[cfg(target_family = "wasm")]
 fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
-    use usb_wasm_bindings::component::usb::device;
+    use crate::bindings::component::usb::device;
 
     // 0. Initialize backend.
     device::init().map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -292,7 +282,7 @@ fn open_uvc_stream(index: u32) -> Result<WebcamFrameStream> {
 
 #[cfg(target_family = "wasm")]
 impl WebcamFrameStream {
-    fn capture_uvc_frame(&self) -> Result<ExportRawFrame> {
+    fn capture_uvc_frame(&self) -> Result<RawFrame> {
         let buffer_size = self.num_packets * self.packet_stride;
         let opts = TransferOptions {
             endpoint: self.ep_addr,
@@ -359,7 +349,7 @@ impl WebcamFrameStream {
 
                     if complete.len() >= MIN_FRAME_BYTES {
                         let (w, h) = guess_resolution(complete.len(), self.actual_frame_size);
-                        return Ok(ExportRawFrame {
+                        return Ok(RawFrame {
                             data: complete,
                             width: w,
                             height: h,
@@ -380,7 +370,7 @@ impl WebcamFrameStream {
 
                         if complete.len() >= MIN_FRAME_BYTES {
                             let (w, h) = guess_resolution(complete.len(), self.actual_frame_size);
-                            return Ok(ExportRawFrame {
+                            return Ok(RawFrame {
                                 data: complete,
                                 width: w,
                                 height: h,
